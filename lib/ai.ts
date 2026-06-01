@@ -8,6 +8,8 @@ export type PlanData = {
   technical: string;
   /** 背景音乐 / 氛围语音（Markdown），供 GLM-TTS 入稿 */
   music: string;
+  /** 数值调校与难度曲线（Markdown），供代码生成和审查使用 */
+  balance: string;
 };
 
 const ZHIPU_CHAT_URL = process.env.ZHIPU_CHAT_URL ?? "https://open.bigmodel.cn/api/paas/v4/chat/completions";
@@ -69,6 +71,36 @@ export async function callZhipuJSON<T>(prompt: string, userInput: string): Promi
   const data = await response.json();
   const rawText = getTextFromChatResponse(data);
   return JSON.parse(rawText) as T;
+}
+
+export async function callZhipuText(prompt: string, userInput: string): Promise<string> {
+  const apiKey = getZhipuApiKey();
+  if (!apiKey) {
+    throw new Error("ZHIPU_API_KEY 未配置，无法调用智谱文本模型。");
+  }
+
+  const response = await fetch(ZHIPU_CHAT_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: getTextModel(),
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: userInput },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`智谱文本模型调用失败: ${response.status} ${message}`);
+  }
+
+  const data = await response.json();
+  return getTextFromChatResponse(data);
 }
 
 export async function* callZhipuStream(prompt: string, userInput: string): AsyncGenerator<string> {
@@ -141,7 +173,8 @@ export async function generatePlanFromIdea(idea: string): Promise<PlanData> {
   "lore": "Markdown 字符串",
   "assets": "Markdown 字符串",
   "technical": "Markdown 字符串",
-  "music": "Markdown 字符串"
+  "music": "Markdown 字符串",
+  "balance": "Markdown 字符串"
 }
 每个字段都应包含对应部分的完整内容。`;
 
@@ -155,6 +188,7 @@ export async function generatePlanFromIdea(idea: string): Promise<PlanData> {
     assets: raw.assets ?? "",
     technical: raw.technical ?? "",
     music: raw.music ?? "",
+    balance: raw.balance ?? "",
   };
 }
 
@@ -348,6 +382,9 @@ ${plan.technical}
 # 背景音乐与氛围语音 (Music)
 ${plan.music}
 
+# 数值调校 (Balance)
+${plan.balance}
+
 请返回完整 HTML 代码，不要用 markdown 代码块包裹。`;
 
   let result = "";
@@ -355,6 +392,50 @@ ${plan.music}
     result += chunk;
   }
   return result;
+}
+
+export async function reviewAndRepairGameHtml(plan: PlanData, html: string): Promise<string> {
+  const prompt = `你是网页小游戏的质量审查、性能优化与数值调校专家。
+
+请审查用户提供的单文件 HTML 游戏。你的目标不是重写创意，而是在保持原玩法和主题的前提下修复明显问题。
+
+重点检查：
+1. 是否真的可玩：有目标、输入、反馈、胜利/失败、重开。
+2. 是否过度默认跑酷：如果策划不是跑酷，不能把游戏修成单纯躲障碍。
+3. 性能是否稳定：requestAnimationFrame、对象数量上限、粒子生命周期、无无限生成、无主循环 innerHTML。
+4. 数值是否合理：速度、冷却、生成频率、敌人数量、生命值、难度曲线不能太快、太慢、太难、太空。
+5. 前 10 秒是否有学习空间，30-90 秒是否有完整体验。
+6. 是否能在无外部图片时继续显示可玩画面。
+
+如果 HTML 已经合格，只返回原 HTML。
+如果不合格，请直接返回修复后的完整 HTML。
+
+严格要求：只返回完整 HTML，不要 Markdown 代码块，不要解释。`;
+
+  const userInput = `策划案：
+# 核心玩法 (Mechanics)
+${plan.mechanics}
+
+# 世界观叙事 (Lore)
+${plan.lore}
+
+# 视觉与音效规范 (Assets)
+${plan.assets}
+
+# 技术逻辑 (Technical)
+${plan.technical}
+
+# 背景音乐与氛围语音 (Music)
+${plan.music}
+
+# 数值调校 (Balance)
+${plan.balance}
+
+待审查 HTML：
+${html}`;
+
+  const reviewed = await callZhipuText(prompt, userInput);
+  return extractHtmlFromResponse(reviewed);
 }
 
 /**

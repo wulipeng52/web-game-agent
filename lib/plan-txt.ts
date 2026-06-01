@@ -3,7 +3,7 @@ import type { PlanData } from "@/lib/ai";
 /** 首行标识，便于识别与版本演进 */
 export const PLAN_TXT_MAGIC = "GameWeaver-Plan-TXT-v1";
 
-const SECTION_KEYS = ["mechanics", "lore", "assets", "technical", "music"] as const satisfies readonly (keyof PlanData)[];
+const SECTION_KEYS = ["mechanics", "lore", "assets", "technical", "music", "balance"] as const satisfies readonly (keyof PlanData)[];
 
 function sectionTag(key: (typeof SECTION_KEYS)[number]) {
   return `<<<section:${key}>>>`;

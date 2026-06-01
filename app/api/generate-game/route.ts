@@ -1,4 +1,12 @@
-import { readPromptFile, getZhipuApiKey, getTextModel, extractHtmlFromResponse, generateAssetUrls, injectAssetUrls } from "@/lib/ai";
+import {
+  readPromptFile,
+  getZhipuApiKey,
+  getTextModel,
+  extractHtmlFromResponse,
+  generateAssetUrls,
+  injectAssetUrls,
+  reviewAndRepairGameHtml,
+} from "@/lib/ai";
 
 export const runtime = "nodejs";
 
@@ -12,8 +20,9 @@ export async function POST(req: Request) {
     const assetsMd = String(plan?.assets ?? "").trim();
     const technical = String(plan?.technical ?? "").trim();
     const music = String(plan?.music ?? "").trim();
+    const balance = String(plan?.balance ?? "").trim();
 
-    if (!mechanics || !lore || !assetsMd || !technical || !music) {
+    if (!mechanics || !lore || !assetsMd || !technical || !music || !balance) {
       return new Response(JSON.stringify({ error: "plan 缺少必要字段" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
@@ -47,6 +56,9 @@ ${technical}
 
 # 背景音乐与氛围语音 (Music)
 ${music}
+
+# 数值调校 (Balance)
+${balance}
 
 重要：直接返回完整的 HTML 代码，不要用 markdown 代码块包裹，不要添加任何解释文字。`;
 
@@ -126,6 +138,10 @@ ${music}
         if (assets.length > 0) {
           finalHtml = injectAssetUrls(finalHtml, assets);
         }
+        finalHtml = await reviewAndRepairGameHtml(
+          { mechanics, lore, assets: assetsMd, technical, music, balance },
+          finalHtml,
+        );
 
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, html: finalHtml, assets })}\n\n`));
         controller.close();

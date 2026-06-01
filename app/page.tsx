@@ -8,6 +8,7 @@ type PlanData = {
   assets: string;
   technical: string;
   music: string;
+  balance: string;
 };
 
 const emptyPlan: PlanData = {
@@ -16,6 +17,7 @@ const emptyPlan: PlanData = {
   assets: "",
   technical: "",
   music: "",
+  balance: "",
 };
 
 function normalizePlan(p: Partial<PlanData> | null | undefined): PlanData {
@@ -26,6 +28,7 @@ function normalizePlan(p: Partial<PlanData> | null | undefined): PlanData {
     assets: p.assets ?? "",
     technical: p.technical ?? "",
     music: p.music ?? "",
+    balance: p.balance ?? "",
   };
 }
 
@@ -151,7 +154,8 @@ export default function Home() {
           plan.lore.trim() &&
           plan.assets.trim() &&
           plan.technical.trim() &&
-          plan.music.trim(),
+          plan.music.trim() &&
+          plan.balance.trim(),
       ),
     [plan],
   );
@@ -642,6 +646,15 @@ export default function Home() {
               onChange={(v) => setPlan((p) => ({ ...p, music: v }))}
               expanded={expandedSection === "music"}
               onToggle={() => setExpandedSection(expandedSection === "music" ? null : "music")}
+              disabled={isLoading}
+            />
+            <CollapsibleSection
+              title="数值调校"
+              icon="🎚️"
+              value={plan.balance}
+              onChange={(v) => setPlan((p) => ({ ...p, balance: v }))}
+              expanded={expandedSection === "balance"}
+              onToggle={() => setExpandedSection(expandedSection === "balance" ? null : "balance")}
               disabled={isLoading}
             />
           </div>
