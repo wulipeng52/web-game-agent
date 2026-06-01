@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -33,6 +33,7 @@ function normalizePlan(p: Partial<PlanData> | null | undefined): PlanData {
 }
 
 type GenerationPhase = "idle" | "plan" | "game" | "done";
+type PlanSectionKey = keyof PlanData;
 
 const STORAGE_KEY = "game-weaver-progress";
 
@@ -480,241 +481,233 @@ export default function Home() {
   }, [plan, previewHtml, isGeneratingVideo]);
 
   const isLoading = phase === "plan" || phase === "game" || isTweaking || isSynthesizingBgm;
+  const planSections: Array<{ key: PlanSectionKey; title: string; short: string; icon: string }> = [
+    { key: "mechanics", title: "核心玩法", short: "玩法", icon: "🎮" },
+    { key: "lore", title: "世界观叙事", short: "叙事", icon: "📖" },
+    { key: "assets", title: "视觉与音效", short: "美术", icon: "🎨" },
+    { key: "technical", title: "技术逻辑", short: "技术", icon: "⚙️" },
+    { key: "music", title: "背景音乐", short: "音乐", icon: "🎵" },
+    { key: "balance", title: "数值调校", short: "数值", icon: "🎚️" },
+  ];
+  const activeSectionKey = (expandedSection as PlanSectionKey | null) ?? "mechanics";
+  const activeSection = planSections.find((section) => section.key === activeSectionKey) ?? planSections[0];
+  const completedSections = planSections.filter((section) => plan[section.key].trim()).length;
 
   return (
-    <main className="flex min-h-screen flex-col bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950 text-zinc-100">
-      <header className="border-b border-zinc-800/50 bg-zinc-900/30 backdrop-blur px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">
-              Game Weaver
-            </h1>
-            <p className="text-sm text-zinc-500">一句话创意 → 可玩游戏</p>
+    <main className="flex min-h-screen flex-col bg-[#0b0d10] text-zinc-100">
+      <header className="shrink-0 border-b border-zinc-800 bg-[#101318] px-5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-semibold tracking-tight text-zinc-50">Game Weaver</h1>
+              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">
+                一句话生成游戏
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">上半区完成创意与策划，下半区专注预览试玩。</p>
           </div>
-          <div className="flex gap-2">
-            {(idea || previewHtml || plan.mechanics) && (
+          <div className="flex items-center gap-2">
+            {hasRestoredFromCache && (idea || previewHtml) ? (
+              <button
+                type="button"
+                onClick={() => setHasRestoredFromCache(false)}
+                className="rounded-md border border-emerald-700/50 bg-emerald-950/40 px-2.5 py-1.5 text-xs text-emerald-300"
+              >
+                已恢复进度
+              </button>
+            ) : null}
+            {(idea || previewHtml || plan.mechanics) ? (
               <button
                 onClick={handleClearProgress}
                 disabled={isLoading}
-                className="flex items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium hover:bg-zinc-700 transition disabled:opacity-50"
-                title="清除当前进度，重新开始"
+                className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-800 disabled:opacity-50"
               >
-                🗑️ 清除
+                清除
               </button>
-            )}
-            {showMiniGame && previewHtml && (
-              <button
-                onClick={handleViewGeneratedGame}
-                className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 transition"
-              >
-                🎮 查看生成的游戏
-              </button>
-            )}
-            {previewHtml && !showMiniGame && (
-              <button
-                onClick={handleDownload}
-                className="flex items-center gap-2 rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium hover:bg-zinc-700 transition"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                下载游戏
-              </button>
-            )}
+            ) : null}
           </div>
         </div>
       </header>
 
-      <section className="grid flex-1 grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)] overflow-hidden">
-        <div className="flex flex-col border-r border-zinc-800/50 bg-zinc-900/20 overflow-y-auto">
-          <div className="p-4 border-b border-zinc-800/50">
-            <label className="text-sm font-medium text-zinc-400 mb-2 block">游戏创意</label>
-            <textarea
-              value={idea}
-              onChange={(e) => setIdea(e.target.value)}
-              disabled={isLoading}
-              className="w-full h-28 rounded-lg border border-zinc-700/50 bg-zinc-800/50 p-3 text-sm outline-none placeholder:text-zinc-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition resize-none disabled:opacity-50"
-              placeholder="用一段话描述玩法与世界观；若希望有特定氛围声或旁白风格，可一并写进创意里（如：配舒缓宇宙感、紧张鼓点旁白等），策划与 GLM-TTS 会整体采纳。"
-            />
-
-            <div className="flex gap-2 mt-3">
+      <section className="grid min-h-0 flex-1 grid-rows-[auto_minmax(420px,1fr)] overflow-hidden lg:grid-rows-[minmax(360px,42vh)_minmax(0,1fr)]">
+        <div className="grid min-h-0 border-b border-zinc-800 lg:grid-cols-[380px_minmax(0,1fr)]">
+          <section className="flex min-h-0 flex-col border-b border-zinc-800 bg-[#0f1217] lg:border-b-0 lg:border-r">
+            <div className="border-b border-zinc-800 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-100">创意输入</h2>
+                  <p className="mt-0.5 text-xs text-zinc-500">写玩法、题材、氛围，也可以直接写限制。</p>
+                </div>
+                <span className="text-xs text-zinc-500">{idea.trim().length} 字</span>
+              </div>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+              <textarea
+                value={idea}
+                onChange={(e) => setIdea(e.target.value)}
+                disabled={isLoading}
+                className="h-32 shrink-0 resize-none rounded-md border border-zinc-800 bg-[#151922] p-3 text-sm leading-6 text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-indigo-500/80 focus:ring-1 focus:ring-indigo-500/30 disabled:opacity-50 lg:min-h-0 lg:flex-1"
+                placeholder="例如：做一个月蚀酒馆里的卡牌战斗游戏，玩家用记忆、谎言和契约组成牌组，对抗会改变规则的客人。"
+              />
+              {error ? (
+                <div className="rounded-md border border-red-900/70 bg-red-950/40 px-3 py-2 text-xs text-red-200">{error}</div>
+              ) : null}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={!idea.trim() || isLoading}
+                  onClick={handleOneClick}
+                  className="rounded-md bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {phase === "plan" ? (
+                    <span className="flex items-center justify-center gap-2"><LoadingSpinner />生成策划中</span>
+                  ) : "生成策划"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!isPlanReady || isLoading}
+                  onClick={handleGenerateGame}
+                  className="rounded-md bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {phase === "game" ? (
+                    <span className="flex items-center justify-center gap-2"><LoadingSpinner />生成游戏中</span>
+                  ) : "生成游戏"}
+                </button>
+              </div>
               <button
                 type="button"
                 disabled={!idea.trim() || isLoading}
-                onClick={handleOneClick}
-                className="flex-1 rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-400 transition"
+                onClick={handleGeneratePlan}
+                className="rounded-md border border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-400 transition hover:border-zinc-700 hover:bg-zinc-900 disabled:opacity-50"
               >
-                {phase === "plan" ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <LoadingSpinner />
-                    生成策划中...
-                  </span>
-                ) : (
-                  "1. 生成策划案"
-                )}
+                重新生成策划
               </button>
             </div>
+          </section>
 
-            {isPlanReady && (
-              <div className="flex flex-col gap-2 mt-3">
-                <button
-                  type="button"
-                  disabled={isLoading}
-                  onClick={handleGenerateGame}
-                  className="w-full rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition"
-                >
-                  {phase === "game" ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <LoadingSpinner />
-                      生成游戏中...
-                    </span>
-                  ) : (
-                    "2. 生成游戏 🎮"
-                  )}
-                </button>
-                <button
-                  type="button"
-                  disabled={isLoading}
-                  onClick={handleGeneratePlan}
-                  className="w-full rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium hover:bg-zinc-800 transition disabled:opacity-50"
-                >
-                  重新生成策划
-                </button>
+          <section className="flex min-h-0 flex-col bg-[#0c0f14]">
+            <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-100">六个策划块</h2>
+                <p className="mt-0.5 text-xs text-zinc-500">卡牌式切换，右侧编辑当前块。</p>
               </div>
-            )}
-          </div>
-
-          {hasRestoredFromCache && (idea || previewHtml) && (
-            <div className="mx-4 mt-4 rounded-lg border border-emerald-800/50 bg-emerald-950/30 p-3 text-sm text-emerald-300 flex items-center justify-between">
-              <span>✨ 已恢复上次的进度</span>
-              <button
-                onClick={() => setHasRestoredFromCache(false)}
-                className="text-emerald-400 hover:text-emerald-300"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2 text-xs text-zinc-500">
+                <span className="rounded-md border border-zinc-800 px-2 py-1">{completedSections}/6</span>
+                <span className={isPlanReady ? "text-emerald-300" : "text-zinc-500"}>
+                  {isPlanReady ? "可生成" : "待完善"}
+                </span>
+              </div>
             </div>
-          )}
 
-          {error && (
-            <div className="mx-4 mt-4 rounded-lg border border-red-800/50 bg-red-950/30 p-3 text-sm text-red-300">
-              {error}
+            <div className="grid min-h-0 flex-1 gap-4 p-4 xl:grid-cols-[minmax(340px,440px)_minmax(0,1fr)]">
+              <div className="grid auto-rows-fr grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2">
+                {planSections.map((section) => {
+                  const filled = plan[section.key].trim().length > 0;
+                  const active = activeSection.key === section.key;
+                  return (
+                    <button
+                      key={section.key}
+                      type="button"
+                      onClick={() => setExpandedSection(section.key)}
+                      disabled={isLoading}
+                      className={[
+                        "group flex min-h-[82px] flex-col justify-between rounded-md border p-3 text-left transition disabled:opacity-50",
+                        active
+                          ? "border-indigo-400 bg-indigo-500/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                          : "border-zinc-800 bg-[#141821] hover:border-zinc-700 hover:bg-[#181d27]",
+                      ].join(" ")}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-zinc-500">{section.short}</span>
+                        <span className={filled ? "h-2 w-2 rounded-full bg-emerald-400" : "h-2 w-2 rounded-full bg-zinc-700"} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold text-zinc-100">{section.title}</span>
+                        <span className="mt-1 block truncate text-xs text-zinc-500">
+                          {filled ? plan[section.key].replace(/[#*_`>-]/g, " ").trim() : "等待生成或手动填写"}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex min-h-[220px] flex-col rounded-md border border-zinc-800 bg-[#11151d]">
+                <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-sm font-semibold text-zinc-100">{activeSection.title}</h3>
+                    <p className="text-xs text-zinc-500">生成游戏会使用这里的最新内容。</p>
+                  </div>
+                  <span className="shrink-0 rounded-md bg-zinc-900 px-2 py-1 text-xs text-zinc-400">
+                    {plan[activeSection.key].trim().length} 字
+                  </span>
+                </div>
+                <textarea
+                  value={plan[activeSection.key]}
+                  onChange={(e) => setPlan((p) => ({ ...p, [activeSection.key]: e.target.value }))}
+                  disabled={isLoading}
+                  className="min-h-[180px] flex-1 resize-none rounded-b-md bg-transparent p-3 text-xs leading-6 text-zinc-200 outline-none placeholder:text-zinc-600 disabled:opacity-50 lg:min-h-0"
+                  placeholder={`在这里编辑「${activeSection.title}」...`}
+                />
+              </div>
             </div>
-          )}
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            <CollapsibleSection
-              title="核心玩法"
-              icon="🎮"
-              value={plan.mechanics}
-              onChange={(v) => setPlan((p) => ({ ...p, mechanics: v }))}
-              expanded={expandedSection === "mechanics"}
-              onToggle={() => setExpandedSection(expandedSection === "mechanics" ? null : "mechanics")}
-              disabled={isLoading}
-            />
-            <CollapsibleSection
-              title="世界观叙事"
-              icon="📖"
-              value={plan.lore}
-              onChange={(v) => setPlan((p) => ({ ...p, lore: v }))}
-              expanded={expandedSection === "lore"}
-              onToggle={() => setExpandedSection(expandedSection === "lore" ? null : "lore")}
-              disabled={isLoading}
-            />
-            <CollapsibleSection
-              title="视觉音效"
-              icon="🎨"
-              value={plan.assets}
-              onChange={(v) => setPlan((p) => ({ ...p, assets: v }))}
-              expanded={expandedSection === "assets"}
-              onToggle={() => setExpandedSection(expandedSection === "assets" ? null : "assets")}
-              disabled={isLoading}
-            />
-            <CollapsibleSection
-              title="技术逻辑"
-              icon="⚙️"
-              value={plan.technical}
-              onChange={(v) => setPlan((p) => ({ ...p, technical: v }))}
-              expanded={expandedSection === "technical"}
-              onToggle={() => setExpandedSection(expandedSection === "technical" ? null : "technical")}
-              disabled={isLoading}
-            />
-            <CollapsibleSection
-              title="背景音乐"
-              icon="🎵"
-              value={plan.music}
-              onChange={(v) => setPlan((p) => ({ ...p, music: v }))}
-              expanded={expandedSection === "music"}
-              onToggle={() => setExpandedSection(expandedSection === "music" ? null : "music")}
-              disabled={isLoading}
-            />
-            <CollapsibleSection
-              title="数值调校"
-              icon="🎚️"
-              value={plan.balance}
-              onChange={(v) => setPlan((p) => ({ ...p, balance: v }))}
-              expanded={expandedSection === "balance"}
-              onToggle={() => setExpandedSection(expandedSection === "balance" ? null : "balance")}
-              disabled={isLoading}
-            />
-          </div>
+          </section>
         </div>
 
-        <div className="flex flex-col bg-zinc-950/50 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/50 bg-zinc-900/30">
-            <span className="text-sm text-zinc-400">
-              {showMiniGame && isLoading
-                ? "边玩边等待..."
-                : showMiniGame && gameReady
-                ? "修改完成！点击查看"
-                : previewHtml
-                ? "游戏预览"
-                : "等待生成..."}
-            </span>
-            {isLoading && (
-              <span className="text-xs text-emerald-400 flex items-center gap-1">
-                <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                {phase === "plan" ? "生成策划中" : isTweaking ? "微调中" : isSynthesizingBgm ? "合成语音中" : "生成游戏中"}
+        <section className="flex min-h-0 flex-col bg-zinc-950">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-[#101318] px-4 py-2.5">
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-semibold text-zinc-100">游戏预览</h2>
+              <span className="rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-500">
+                {showMiniGame && isLoading ? "等待中" : showMiniGame && gameReady ? "已生成" : previewHtml ? "可试玩" : "未生成"}
               </span>
-            )}
-            {gameReady && showMiniGame && (
-              <span className="text-xs text-yellow-400 flex items-center gap-1 animate-pulse">
-                ✨ 修改完成
-              </span>
-            )}
+              {isLoading ? (
+                <span className="flex items-center gap-1 text-xs text-emerald-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  {phase === "plan" ? "生成策划" : isTweaking ? "微调中" : isSynthesizingBgm ? "合成语音" : "生成游戏"}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {showMiniGame && previewHtml ? (
+                <button onClick={handleViewGeneratedGame} className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400">查看游戏</button>
+              ) : null}
+              {previewHtml && !showMiniGame ? (
+                <button onClick={handleDownload} className="rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-white">下载</button>
+              ) : null}
+            </div>
           </div>
 
-          <div className="flex-1 relative">
+          <div className="relative min-h-0 flex-1">
             {showMiniGame ? (
               <WaitingMiniGame gameReady={gameReady} onViewGame={handleViewGeneratedGame} />
             ) : previewHtml ? (
               <iframe
                 title="game-preview"
-                className="w-full h-full bg-white"
+                className="h-full w-full bg-white"
                 sandbox="allow-scripts allow-same-origin allow-pointer-lock"
                 srcDoc={previewHtml}
               />
             ) : (
-              <div className="flex items-center justify-center h-full text-zinc-600">
+              <div className="flex h-full items-center justify-center text-zinc-600">
                 <div className="text-center">
-                  <div className="text-6xl mb-4">🎮</div>
-                  <p>输入创意，点击生成</p>
+                  <div className="mb-3 text-5xl">🎮</div>
+                  <p className="text-sm text-zinc-500">生成后这里显示可玩预览。</p>
                 </div>
               </div>
             )}
           </div>
 
-          {previewHtml && !showMiniGame && (
-            <div className="border-t border-zinc-800/50 bg-zinc-900/30 p-3 space-y-3">
-              {/* 微调区域 */}
-              <div className="flex gap-2">
+          {previewHtml && !showMiniGame ? (
+            <div className="border-t border-zinc-800 bg-[#101318] p-3">
+              <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
                 <input
                   type="text"
                   value={tweakRequest}
                   onChange={(e) => setTweakRequest(e.target.value)}
                   disabled={isLoading || isGeneratingVideo || isSynthesizingBgm}
-                  placeholder="输入修改需求，如：把背景改成蓝色、让敌人移动更慢、增加生命值..."
-                  className="flex-1 rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-amber-500 disabled:opacity-50"
+                  placeholder="微调游戏，例如：降低敌人速度、增加防御牌、让第一回合更宽容..."
+                  className="min-w-0 rounded-md border border-zinc-800 bg-[#151922] px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-amber-500 disabled:opacity-50"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
@@ -726,80 +719,34 @@ export default function Home() {
                   type="button"
                   disabled={!tweakRequest.trim() || isLoading || isGeneratingVideo || isSynthesizingBgm}
                   onClick={handleTweakGame}
-                  className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-amber-400 transition whitespace-nowrap"
+                  className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {isTweaking ? (
-                    <span className="flex items-center gap-2">
-                      <LoadingSpinner />
-                      微调中
-                    </span>
-                  ) : (
-                    "微调游戏 ✨"
-                  )}
+                  {isTweaking ? "微调中" : "微调游戏"}
                 </button>
-              </div>
-
-              {/* 视频生成区域 */}
-              <div className="flex items-center gap-2 pt-2 border-t border-zinc-800/30">
-                <button
-                  type="button"
-                  disabled={
-                    !plan.lore?.trim() || !previewHtml?.trim() || isLoading || isGeneratingVideo || isSynthesizingBgm
-                  }
-                  onClick={handleGenerateVideo}
-                  className="rounded-lg bg-purple-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-400 transition whitespace-nowrap"
-                >
-                  {isGeneratingVideo ? (
-                    <span className="flex items-center gap-2">
-                      <LoadingSpinner />
-                      生成中
-                    </span>
-                  ) : (
-                    "🎬 生成预告片"
-                  )}
-                </button>
-                {videoStatus && (
-                  <span className="text-xs text-purple-400">{videoStatus}</span>
-                )}
-                {videoUrl && (
-                  <a
-                    href={videoUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-emerald-400 hover:underline"
-                  >
-                    🎥 查看视频
-                  </a>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-800/30">
                 <button
                   type="button"
                   disabled={!previewHtml || !plan.music?.trim() || isLoading || isSynthesizingBgm}
                   onClick={handleSynthesizeBgm}
-                  className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-violet-500 transition whitespace-nowrap"
+                  className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-800 disabled:opacity-40"
                 >
-                  {isSynthesizingBgm ? (
-                    <span className="flex items-center gap-2">
-                      <LoadingSpinner />
-                      GLM-TTS 合成中…
-                    </span>
-                  ) : (
-                    "🎙️ 合成/重嵌背景语音"
-                  )}
+                  {isSynthesizingBgm ? "语音中" : "语音"}
                 </button>
-                <span className="text-xs text-zinc-500">
-                  生成游戏时已按策划「背景音乐」自动嵌入；若你改写了朗读稿，点此重新合成并嵌入（循环播放，点按页面可触发播放）
-                </span>
               </div>
-
-              <p className="text-xs text-zinc-600">
-                提示：微调会保留游戏主体 | 预告片基于世界观 | 语音为 TTS 朗读氛围稿，非纯器乐 BGM
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+                <button
+                  type="button"
+                  disabled={!plan.lore?.trim() || !previewHtml?.trim() || isLoading || isGeneratingVideo || isSynthesizingBgm}
+                  onClick={handleGenerateVideo}
+                  className="text-zinc-400 underline-offset-4 hover:text-zinc-200 hover:underline disabled:pointer-events-none disabled:opacity-40"
+                >
+                  {isGeneratingVideo ? "预告生成中" : "生成预告"}
+                </button>
+                {videoStatus ? <span className="text-purple-300">{videoStatus}</span> : null}
+                {videoUrl ? <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-300 hover:underline">查看视频</a> : null}
+              </div>
             </div>
-          )}
-        </div>
+          ) : null}
+        </section>
       </section>
     </main>
   );
@@ -811,66 +758,6 @@ function LoadingSpinner() {
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
     </svg>
-  );
-}
-
-function CollapsibleSection({
-  title,
-  icon,
-  value,
-  onChange,
-  expanded,
-  onToggle,
-  disabled,
-}: {
-  title: string;
-  icon: string;
-  value: string;
-  onChange: (v: string) => void;
-  expanded: boolean;
-  onToggle: () => void;
-  disabled: boolean;
-}) {
-  const hasContent = value.replace(/\u00a0/g, " ").trim().length > 0;
-
-  return (
-    <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/30 transition-colors">
-      <button
-        type="button"
-        onClick={onToggle}
-        disabled={disabled}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left disabled:opacity-50"
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-zinc-100 flex-nowrap">
-          <span className="shrink-0">{icon}</span>
-          <span className="min-w-0 shrink truncate">{title}</span>
-          {hasContent ? (
-            <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden />
-          ) : null}
-        </span>
-        <svg
-          className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${expanded ? "rotate-180" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-zinc-700/40 px-3 pb-3 pt-2">
-          <textarea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            disabled={disabled}
-            className="min-h-40 w-full rounded-md border border-zinc-700/50 bg-zinc-900/50 p-2.5 text-xs leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-indigo-500/80 focus:ring-1 focus:ring-indigo-500/20 resize-y disabled:opacity-50"
-            placeholder={`在此编辑${title}...`}
-          />
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -1202,3 +1089,4 @@ function WaitingMiniGame({ gameReady, onViewGame }: { gameReady: boolean; onView
     </div>
   );
 }
+
