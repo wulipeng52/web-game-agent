@@ -34,6 +34,16 @@ function normalizePlan(p: Partial<PlanData> | null | undefined): PlanData {
 
 type GenerationPhase = "idle" | "plan" | "game" | "done";
 type PlanSectionKey = keyof PlanData;
+type GenerationStageKey = "code" | "assets" | "review" | "repair" | "audio" | "done";
+
+const generationStages: Array<{ key: GenerationStageKey; label: string }> = [
+  { key: "code", label: "生成代码中" },
+  { key: "assets", label: "替换美术资源中" },
+  { key: "review", label: "审查可玩性中" },
+  { key: "repair", label: "修复数值与性能中" },
+  { key: "audio", label: "嵌入语音中" },
+  { key: "done", label: "完成" },
+];
 
 const STORAGE_KEY = "game-weaver-progress";
 
@@ -106,6 +116,8 @@ export default function Home() {
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [videoStatus, setVideoStatus] = useState("");
   const [isSynthesizingBgm, setIsSynthesizingBgm] = useState(false);
+  const [generationStage, setGenerationStage] = useState<GenerationStageKey | null>(null);
+  const [generationStageNote, setGenerationStageNote] = useState("");
 
   const [hasRestoredFromCache, setHasRestoredFromCache] = useState(false);
 
@@ -145,6 +157,8 @@ export default function Home() {
     setPhase("idle");
     setError("");
     setVideoUrl(null);
+    setGenerationStage(null);
+    setGenerationStageNote("");
     setHasRestoredFromCache(false);
   }, []);
 
@@ -199,6 +213,8 @@ export default function Home() {
     }
     setError("");
     setIsSynthesizingBgm(true);
+    setGenerationStage("audio");
+    setGenerationStageNote("正在重新合成并嵌入语音。");
     try {
       const res = await fetch("/api/generate-bgm", {
         method: "POST",
@@ -212,6 +228,8 @@ export default function Home() {
       if (j.html) {
         setPreviewHtml(j.html);
       }
+      setGenerationStage("done");
+      setGenerationStageNote("语音已嵌入，可试玩或保存。");
     } catch (e) {
       setError(e instanceof Error ? e.message : "GLM-TTS 合成失败");
     } finally {
@@ -227,6 +245,8 @@ export default function Home() {
     setPreviewHtml("");
     setShowMiniGame(true);
     setGameReady(false);
+    setGenerationStage("code");
+    setGenerationStageNote("正在让模型从策划生成完整 HTML 游戏。");
 
     try {
       const response = await fetch("/api/generate-game", {
@@ -261,10 +281,16 @@ export default function Home() {
               if (data.chunk) {
                 setStreamingCode((prev) => prev + data.chunk);
               }
+              if (data.stage) {
+                setGenerationStage(data.stage as GenerationStageKey);
+                setGenerationStageNote(String(data.label ?? ""));
+              }
               if (data.done && data.html) {
                 let nextHtml = data.html as string;
                 if (plan.music?.trim()) {
                   try {
+                    setGenerationStage("audio");
+                    setGenerationStageNote("正在把 GLM-TTS 语音嵌入游戏 HTML。");
                     const bgmRes = await fetch("/api/generate-bgm", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
@@ -280,6 +306,8 @@ export default function Home() {
                 }
                 setPreviewHtml(nextHtml);
                 setPhase("done");
+                setGenerationStage("done");
+                setGenerationStageNote("游戏已生成，可试玩或保存。");
                 setGameReady(true);
               }
             } catch {
@@ -305,6 +333,8 @@ export default function Home() {
     setPlan(emptyPlan);
     setShowMiniGame(false);
     setGameReady(false);
+    setGenerationStage(null);
+    setGenerationStageNote("");
 
     try {
       const response = await fetch("/api/generate-plan", {
@@ -347,6 +377,8 @@ export default function Home() {
     setIsTweaking(true);
     setShowMiniGame(true);
     setGameReady(false);
+    setGenerationStage("code");
+    setGenerationStageNote("正在按你的要求微调游戏。");
 
     try {
       const response = await fetch("/api/tweak-game", {
@@ -383,6 +415,8 @@ export default function Home() {
               const data = JSON.parse(line.slice(6));
               if (data.done && data.html) {
                 setPreviewHtml(data.html);
+                setGenerationStage("done");
+                setGenerationStageNote("微调完成，可试玩或保存。");
                 setGameReady(true);
                 setTweakRequest("");
               }
@@ -672,15 +706,20 @@ export default function Home() {
               {showMiniGame && previewHtml ? (
                 <button onClick={handleViewGeneratedGame} className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400">查看游戏</button>
               ) : null}
-              {previewHtml && !showMiniGame ? (
-                <button onClick={handleDownload} className="rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-white">下载</button>
+              {previewHtml ? (
+                <button onClick={handleDownload} className="rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-white">保存游戏</button>
               ) : null}
             </div>
           </div>
 
           <div className="relative min-h-0 flex-1">
             {showMiniGame ? (
-              <WaitingMiniGame gameReady={gameReady} onViewGame={handleViewGeneratedGame} />
+              <WaitingMiniGame
+                gameReady={gameReady}
+                generationStage={generationStage}
+                generationStageNote={generationStageNote}
+                onViewGame={handleViewGeneratedGame}
+              />
             ) : previewHtml ? (
               <iframe
                 title="game-preview"
@@ -761,7 +800,17 @@ function LoadingSpinner() {
   );
 }
 
-function WaitingMiniGame({ gameReady, onViewGame }: { gameReady: boolean; onViewGame: () => void }) {
+function WaitingMiniGame({
+  gameReady,
+  generationStage,
+  generationStageNote,
+  onViewGame,
+}: {
+  gameReady: boolean;
+  generationStage: GenerationStageKey | null;
+  generationStageNote: string;
+  onViewGame: () => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameStateRef = useRef({
     playerY: 250,
@@ -1058,14 +1107,45 @@ function WaitingMiniGame({ gameReady, onViewGame }: { gameReady: boolean; onView
   }, []);
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center bg-zinc-900">
+    <div className="relative flex h-full w-full flex-col items-center justify-center gap-4 bg-zinc-900 p-4">
       <canvas
         ref={canvasRef}
         width={800}
         height={500}
-        className="rounded-lg shadow-2xl max-w-full max-h-full"
+        className="max-h-[65%] max-w-full rounded-lg shadow-2xl"
         style={{ imageRendering: "pixelated" }}
       />
+
+      <div className="w-full max-w-4xl rounded-md border border-zinc-800 bg-zinc-950/70 p-3">
+        <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {generationStages.map((stage) => {
+            const currentIndex = generationStage
+              ? generationStages.findIndex((item) => item.key === generationStage)
+              : -1;
+            const stageIndex = generationStages.findIndex((item) => item.key === stage.key);
+            const isDone = currentIndex > stageIndex || generationStage === "done";
+            const isActive = generationStage === stage.key && generationStage !== "done";
+            return (
+              <div
+                key={stage.key}
+                className={[
+                  "rounded-md border px-2.5 py-2 text-xs",
+                  isActive
+                    ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200"
+                    : isDone
+                    ? "border-zinc-700 bg-zinc-900 text-zinc-300"
+                    : "border-zinc-800 bg-zinc-950 text-zinc-600",
+                ].join(" ")}
+              >
+                <span className="block truncate">{stage.label}</span>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-2 min-h-4 text-xs text-zinc-500">
+          {generationStageNote || "生成开始后，这里会显示当前阶段。"}
+        </p>
+      </div>
       
       {gameReady && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">

@@ -5,10 +5,11 @@ import {
   extractHtmlFromResponse,
   generateAssetUrls,
   injectAssetUrls,
-  reviewAndRepairGameHtml,
+  reviewAndRepairGameHtmlWithTimeout,
 } from "@/lib/ai";
 
 export const runtime = "nodejs";
+export const maxDuration = 900;
 
 export async function POST(req: Request) {
   try {
@@ -105,6 +106,11 @@ ${balance}
     const stream = new ReadableStream({
       async start(controller) {
         let buffer = "";
+        const send = (payload: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        };
+
+        send({ stage: "code", label: "生成代码中", status: "active" });
 
         while (true) {
           const { done, value } = await reader.read();
@@ -123,7 +129,7 @@ ${balance}
                 const content = json?.choices?.[0]?.delta?.content;
                 if (content) {
                   fullContent += content;
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ chunk: content })}\n\n`));
+                  send({ chunk: content });
                 }
               } catch {
                 // 忽略解析错误
@@ -133,17 +139,27 @@ ${balance}
         }
 
         // 等待图片生成完成，然后替换占位符
+        send({ stage: "assets", label: "替换美术资源中", status: "active" });
         const assets = await assetPromise;
         let finalHtml = extractHtmlFromResponse(fullContent);
         if (assets.length > 0) {
           finalHtml = injectAssetUrls(finalHtml, assets);
         }
-        finalHtml = await reviewAndRepairGameHtml(
+        send({ stage: "review", label: "审查可玩性中", status: "active" });
+        send({ stage: "repair", label: "修复数值与性能中", status: "active" });
+        const repairResult = await reviewAndRepairGameHtmlWithTimeout(
           { mechanics, lore, assets: assetsMd, technical, music, balance },
           finalHtml,
+          120_000,
         );
+        finalHtml = repairResult.html;
+        if (repairResult.timedOut) {
+          send({ stage: "repair", label: "审查超时，已保留原始可玩版本", status: "fallback" });
+        } else if (repairResult.error) {
+          send({ stage: "repair", label: repairResult.error, status: "fallback" });
+        }
 
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, html: finalHtml, assets })}\n\n`));
+        send({ done: true, html: finalHtml, assets, repair: repairResult });
         controller.close();
       },
     });

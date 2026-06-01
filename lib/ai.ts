@@ -438,6 +438,36 @@ ${html}`;
   return extractHtmlFromResponse(reviewed);
 }
 
+export async function reviewAndRepairGameHtmlWithTimeout(
+  plan: PlanData,
+  html: string,
+  timeoutMs = 120_000,
+): Promise<{ html: string; repaired: boolean; timedOut: boolean; error?: string }> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const reviewed = await Promise.race([
+      reviewAndRepairGameHtml(plan, html).then((result) => ({
+        html: result,
+        repaired: result.trim() !== html.trim(),
+        timedOut: false,
+      })),
+      new Promise<{ html: string; repaired: boolean; timedOut: boolean }>((resolve) => {
+        timeoutId = setTimeout(() => resolve({ html, repaired: false, timedOut: true }), timeoutMs);
+      }),
+    ]);
+    return reviewed;
+  } catch (error) {
+    return {
+      html,
+      repaired: false,
+      timedOut: false,
+      error: error instanceof Error ? error.message : "审查修复失败，已返回原始游戏",
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Vidu 图生视频要求 image_url 为「单个」字符串 URL；
  * 若误传 JSON 数组或多 URL 字符串，只取第一张，避免 1214 报错。
