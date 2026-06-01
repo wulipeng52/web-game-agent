@@ -811,16 +811,103 @@ function WaitingMiniGame({
   generationStageNote: string;
   onViewGame: () => void;
 }) {
+  type WaitingGameId = "runner" | "memory" | "link" | "defense";
+  type MemoryCard = { symbol: string; flipped: boolean; matched: boolean };
+  type RunnerObstacle = { x: number; gapY: number; passed: boolean };
+  type LinkPoint = { id: string; color: string; x: number; y: number };
+  type DefenseEnemy = { lane: number; x: number; speed: number };
+  type WaitingState = {
+    started: boolean;
+    ended: boolean;
+    won: boolean;
+    score: number;
+    runnerY: number;
+    runnerV: number;
+    runnerObstacles: RunnerObstacle[];
+    memoryCards: MemoryCard[];
+    memoryFirst: number | null;
+    memoryMoves: number;
+    linkPoints: LinkPoint[];
+    linkSelected: string | null;
+    linkPairs: Record<string, boolean>;
+    linkMistakes: number;
+    defenseHp: number;
+    defenseTime: number;
+    defenseSpawn: number;
+    defenseEnemies: DefenseEnemy[];
+  };
+
+  const games = useMemo<Array<{ id: WaitingGameId; name: string; desc: string }>>(
+    () => [
+      { id: "runner", name: "星隙躲避", desc: "点击/空格穿过裂隙" },
+      { id: "memory", name: "记忆翻牌", desc: "配对全部符文" },
+      { id: "link", name: "能量连线", desc: "连接同色节点" },
+      { id: "defense", name: "小队守线", desc: "守住三条路线" },
+    ],
+    [],
+  );
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const gameStateRef = useRef({
-    playerY: 250,
-    playerVelocity: 0,
-    obstacles: [] as { x: number; gapY: number; passed: boolean }[],
-    score: 0,
-    gameOver: false,
-    started: false,
-    diedThisFrame: false,
-  });
+  const [selectedGame, setSelectedGame] = useState<WaitingGameId>("runner");
+  const [round, setRound] = useState(0);
+
+  const createState = useCallback((id: WaitingGameId): WaitingState => {
+    void id;
+    const symbols = ["月", "星", "契", "梦", "火", "雾"];
+    const deck = [...symbols, ...symbols]
+      .sort(() => Math.random() - 0.5)
+      .map((symbol) => ({ symbol, flipped: false, matched: false }));
+    const colors = ["#60a5fa", "#f87171", "#fbbf24", "#34d399"];
+    const linkPoints = colors.flatMap((color, i) => [
+      { id: `${i}a`, color, x: 120 + Math.random() * 220, y: 90 + Math.random() * 300 },
+      { id: `${i}b`, color, x: 460 + Math.random() * 220, y: 90 + Math.random() * 300 },
+    ]);
+    return {
+      started: false,
+      ended: false,
+      won: false,
+      score: 0,
+      runnerY: 250,
+      runnerV: 0,
+      runnerObstacles: [],
+      memoryCards: deck,
+      memoryFirst: null,
+      memoryMoves: 0,
+      linkPoints,
+      linkSelected: null,
+      linkPairs: {},
+      linkMistakes: 0,
+      defenseHp: 6,
+      defenseTime: 45,
+      defenseSpawn: 0,
+      defenseEnemies: [],
+    };
+  }, []);
+
+  const stateRef = useRef<WaitingState>(createState("runner"));
+
+  const resetGame = useCallback(
+    (id = selectedGame) => {
+      stateRef.current = createState(id);
+      setRound((value) => value + 1);
+    },
+    [createState, selectedGame],
+  );
+
+  const switchGame = useCallback(
+    (id: WaitingGameId) => {
+      setSelectedGame(id);
+      stateRef.current = createState(id);
+      setRound((value) => value + 1);
+    },
+    [createState],
+  );
+  const currentGame = games.find((game) => game.id === selectedGame) ?? games[0];
+  const switchNextGame = useCallback(() => {
+    const index = games.findIndex((game) => game.id === selectedGame);
+    const next = games[(index + 1) % games.length];
+    switchGame(next.id);
+  }, [games, selectedGame, switchGame]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -829,14 +916,11 @@ function WaitingMiniGame({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const game = gameStateRef.current;
+    const game = stateRef.current;
     let animationId: number;
-
-    const GRAVITY = 0.15;
-    const JUMP = -5;
-    const PIPE_WIDTH = 45;
-    const GAP_HEIGHT = 200;
-    const PIPE_SPEED = 1.5;
+    let lastTime = 0;
+    const W = canvas.width;
+    const H = canvas.height;
 
     // —— Web Audio：无需外链文件，适合等待小游戏 ——
     type Ctx = AudioContext;
@@ -889,40 +973,19 @@ function WaitingMiniGame({
       bgmOn = false;
     };
 
-    const playJump = () => {
+    const blip = (freq = 420) => {
       const c = getCtx();
       if (!c) return;
       const o = c.createOscillator();
       const g = c.createGain();
       o.type = "sine";
-      o.frequency.setValueAtTime(350, c.currentTime);
-      o.frequency.exponentialRampToValueAtTime(620, c.currentTime + 0.07);
-      g.gain.setValueAtTime(0.11, c.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.09);
+      o.frequency.setValueAtTime(freq, c.currentTime);
+      g.gain.setValueAtTime(0.08, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.11);
       o.connect(g);
       g.connect(c.destination);
       o.start();
-      o.stop(c.currentTime + 0.1);
-    };
-
-    const playScore = () => {
-      const c = getCtx();
-      if (!c) return;
-      const notes = [523.25, 659.25];
-      notes.forEach((freq, i) => {
-        const o = c!.createOscillator();
-        const g = c!.createGain();
-        o.type = "triangle";
-        o.frequency.value = freq;
-        const t0 = c!.currentTime + i * 0.04;
-        g.gain.setValueAtTime(0, t0);
-        g.gain.linearRampToValueAtTime(0.09, t0 + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
-        o.connect(g);
-        g.connect(c!.destination);
-        o.start(t0);
-        o.stop(t0 + 0.14);
-      });
+      o.stop(c.currentTime + 0.12);
     };
 
     const playGameOver = () => {
@@ -941,162 +1004,313 @@ function WaitingMiniGame({
       o.stop(c.currentTime + 0.45);
     };
 
-    const jump = () => {
-      getCtx();
-      playJump();
-      startBgm();
+    const finish = (won: boolean) => {
+      if (game.ended) return;
+      game.ended = true;
+      game.won = won;
+      if (!won) playGameOver();
+      else blip(720);
+    };
 
-      if (game.gameOver) {
-        game.playerY = 250;
-        game.playerVelocity = 0;
-        game.obstacles = [];
-        game.score = 0;
-        game.gameOver = false;
-        game.started = true;
-      } else {
-        game.started = true;
-        game.playerVelocity = JUMP;
+    const cardAt = (x: number, y: number) => {
+      const cols = 4;
+      const cardW = 110;
+      const cardH = 86;
+      const startX = (W - cols * cardW - 3 * 14) / 2;
+      const startY = 82;
+      for (let i = 0; i < game.memoryCards.length; i++) {
+        const cx = startX + (i % cols) * (cardW + 14);
+        const cy = startY + Math.floor(i / cols) * (cardH + 14);
+        if (x >= cx && x <= cx + cardW && y >= cy && y <= cy + cardH) return i;
+      }
+      return -1;
+    };
+
+    const pointAt = (x: number, y: number) =>
+      game.linkPoints.find((p) => Math.hypot(p.x - x, p.y - y) < 26);
+
+    const interact = (x?: number, y?: number) => {
+      getCtx();
+      startBgm();
+      if (game.ended) {
+        stateRef.current = createState(selectedGame);
+        setRound((value) => value + 1);
+        return;
+      }
+      game.started = true;
+      if (selectedGame === "runner") {
+        game.runnerV = -310;
+        blip(520);
+      } else if (selectedGame === "memory" && x !== undefined && y !== undefined) {
+        const idx = cardAt(x, y);
+        const card = game.memoryCards[idx];
+        if (!card || card.flipped || card.matched) return;
+        card.flipped = true;
+        blip(430);
+        if (game.memoryFirst === null) {
+          game.memoryFirst = idx;
+        } else {
+          game.memoryMoves += 1;
+          const first = game.memoryCards[game.memoryFirst];
+          if (first.symbol === card.symbol) {
+            first.matched = true;
+            card.matched = true;
+            game.score += 1;
+            blip(680);
+            if (game.memoryCards.every((c) => c.matched)) finish(true);
+          } else {
+            const firstIdx = game.memoryFirst;
+            window.setTimeout(() => {
+              const s = stateRef.current;
+              s.memoryCards[firstIdx].flipped = false;
+              s.memoryCards[idx].flipped = false;
+            }, 550);
+          }
+          if (game.memoryMoves >= 14 && !game.memoryCards.every((c) => c.matched)) finish(false);
+          game.memoryFirst = null;
+        }
+      } else if (selectedGame === "link" && x !== undefined && y !== undefined) {
+        const point = pointAt(x, y);
+        if (!point || game.linkPairs[point.color]) return;
+        if (!game.linkSelected) {
+          game.linkSelected = point.id;
+          blip(430);
+          return;
+        }
+        const selected = game.linkPoints.find((p) => p.id === game.linkSelected);
+        if (selected && selected.color === point.color && selected.id !== point.id) {
+          game.linkPairs[point.color] = true;
+          game.score += 1;
+          blip(700);
+          if (Object.keys(game.linkPairs).length === 4) finish(true);
+        } else {
+          game.linkMistakes += 1;
+          blip(160);
+          if (game.linkMistakes >= 4) finish(false);
+        }
+        game.linkSelected = null;
+      } else if (selectedGame === "defense" && y !== undefined) {
+        const lane = Math.max(0, Math.min(2, Math.floor((y - 110) / 100)));
+        const target = game.defenseEnemies
+          .filter((enemy) => enemy.lane === lane)
+          .sort((a, b) => a.x - b.x)[0];
+        if (target) {
+          game.defenseEnemies = game.defenseEnemies.filter((enemy) => enemy !== target);
+          game.score += 1;
+          blip(620);
+        } else {
+          blip(220);
+        }
       }
     };
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.code === "Space" || e.code === "ArrowUp") {
         e.preventDefault();
-        jump();
+        interact();
       }
     };
 
-    const handleClick = () => jump();
+    const handleClick = (event: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) / rect.width) * W;
+      const y = ((event.clientY - rect.top) / rect.height) * H;
+      interact(x, y);
+    };
 
     canvas.addEventListener("click", handleClick);
     window.addEventListener("keydown", handleKey);
 
-    const gameLoop = () => {
-      game.diedThisFrame = false;
-
-      ctx.fillStyle = "#1a1a2e";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // 星星背景
-      ctx.fillStyle = "#ffffff22";
-      for (let i = 0; i < 50; i++) {
-        const x = (i * 137 + game.score * 0.5) % canvas.width;
-        const y = (i * 73) % canvas.height;
-        ctx.fillRect(x, y, 2, 2);
-      }
-
-      if (!game.started) {
-        ctx.fillStyle = "#fff";
-        ctx.font = "24px system-ui";
-        ctx.textAlign = "center";
-        ctx.fillText("🦖 恐龙跑酷", canvas.width / 2, 200);
-        ctx.font = "16px system-ui";
-        ctx.fillText("点击或按空格开始", canvas.width / 2, 250);
-        ctx.fillText("躲避障碍，比比看谁分更高！", canvas.width / 2, 280);
-        animationId = requestAnimationFrame(gameLoop);
-        return;
-      }
-
-      if (!game.gameOver) {
-        game.playerVelocity += GRAVITY;
-        game.playerY += game.playerVelocity;
-
-        if (game.obstacles.length === 0 || game.obstacles[game.obstacles.length - 1].x < canvas.width - 300) {
-          game.obstacles.push({
-            x: canvas.width,
-            gapY: 100 + Math.random() * (canvas.height - 200 - GAP_HEIGHT),
-            passed: false,
-          });
-        }
-
-        for (const obs of game.obstacles) {
-          obs.x -= PIPE_SPEED;
-
-          if (!obs.passed && obs.x + PIPE_WIDTH < 80) {
-            obs.passed = true;
-            game.score++;
-            playScore();
-          }
-
-          const playerLeft = 60;
-          const playerRight = 100;
-          const playerTop = game.playerY;
-          const playerBottom = game.playerY + 30;
-
-          if (
-            playerRight > obs.x &&
-            playerLeft < obs.x + PIPE_WIDTH &&
-            (playerTop < obs.gapY || playerBottom > obs.gapY + GAP_HEIGHT)
-          ) {
-            game.gameOver = true;
-            game.diedThisFrame = true;
-          }
-        }
-
-        game.obstacles = game.obstacles.filter((o) => o.x > -PIPE_WIDTH);
-
-        if (game.playerY < 0 || game.playerY > canvas.height - 30) {
-          game.gameOver = true;
-          game.diedThisFrame = true;
-        }
-      }
-
-      if (game.diedThisFrame) {
-        playGameOver();
-      }
-
-      // 绘制障碍物
-      ctx.fillStyle = "#6366f1";
-      for (const obs of game.obstacles) {
-        ctx.fillRect(obs.x, 0, PIPE_WIDTH, obs.gapY);
-        ctx.fillRect(obs.x, obs.gapY + GAP_HEIGHT, PIPE_WIDTH, canvas.height - obs.gapY - GAP_HEIGHT);
-        
-        ctx.fillStyle = "#818cf8";
-        ctx.fillRect(obs.x - 5, obs.gapY - 20, PIPE_WIDTH + 10, 20);
-        ctx.fillRect(obs.x - 5, obs.gapY + GAP_HEIGHT, PIPE_WIDTH + 10, 20);
-        ctx.fillStyle = "#6366f1";
-      }
-
-      // 绘制玩家（小火箭）
-      ctx.fillStyle = "#10b981";
-      ctx.beginPath();
-      ctx.moveTo(100, game.playerY + 15);
-      ctx.lineTo(60, game.playerY);
-      ctx.lineTo(60, game.playerY + 30);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.fillStyle = "#f59e0b";
-      ctx.beginPath();
-      ctx.moveTo(60, game.playerY + 10);
-      ctx.lineTo(45, game.playerY + 15);
-      ctx.lineTo(60, game.playerY + 20);
-      ctx.closePath();
-      ctx.fill();
-
-      // 分数
-      ctx.fillStyle = "#fff";
+    const drawBase = (title: string, hint: string) => {
+      ctx.fillStyle = "#111827";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#ffffff18";
+      for (let i = 0; i < 50; i++) ctx.fillRect((i * 137 + game.score * 3) % W, (i * 73) % H, 2, 2);
+      ctx.fillStyle = "#f8fafc";
       ctx.font = "bold 24px system-ui";
       ctx.textAlign = "left";
-      ctx.fillText(`分数: ${game.score}`, 20, 40);
+      ctx.fillText(title, 24, 38);
+      ctx.font = "14px system-ui";
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillText(hint, 24, 62);
+    };
 
-      if (game.gameOver) {
-        ctx.fillStyle = "rgba(0,0,0,0.7)";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = "#fff";
-        ctx.font = "32px system-ui";
-        ctx.textAlign = "center";
-        ctx.fillText("游戏结束！", canvas.width / 2, canvas.height / 2 - 20);
-        ctx.font = "20px system-ui";
-        ctx.fillText(`最终分数: ${game.score}`, canvas.width / 2, canvas.height / 2 + 20);
-        ctx.font = "16px system-ui";
-        ctx.fillText("点击重新开始", canvas.width / 2, canvas.height / 2 + 60);
+    const drawEnd = () => {
+      if (!game.ended) return;
+      ctx.fillStyle = "rgba(0,0,0,0.68)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 32px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText(game.won ? "成功！" : "失败了", W / 2, H / 2 - 26);
+      ctx.font = "16px system-ui";
+      ctx.fillText("点击画面重开，或在上方切换小游戏", W / 2, H / 2 + 18);
+    };
+
+    const updateRunner = (dt: number) => {
+      drawBase("星隙躲避", "点击或空格上升，穿过裂隙得分");
+      if (game.started && !game.ended) {
+        game.runnerV += 760 * dt;
+        game.runnerY += game.runnerV * dt;
+        if (!game.runnerObstacles.length || game.runnerObstacles[game.runnerObstacles.length - 1].x < W - 260) {
+          game.runnerObstacles.push({ x: W, gapY: 110 + Math.random() * 210, passed: false });
+        }
+        for (const obs of game.runnerObstacles) {
+          obs.x -= (175 + game.score * 5) * dt;
+          if (!obs.passed && obs.x < 70) {
+            obs.passed = true;
+            game.score += 1;
+            blip(650);
+            if (game.score >= 12) finish(true);
+          }
+          if (obs.x < 105 && obs.x + 48 > 58 && (game.runnerY < obs.gapY || game.runnerY + 28 > obs.gapY + 170)) {
+            finish(false);
+          }
+        }
+        game.runnerObstacles = game.runnerObstacles.filter((obs) => obs.x > -60);
+        if (game.runnerY < 0 || game.runnerY > H - 28) finish(false);
       }
+      ctx.fillStyle = "#6366f1";
+      for (const obs of game.runnerObstacles) {
+        ctx.fillRect(obs.x, 0, 48, obs.gapY);
+        ctx.fillRect(obs.x, obs.gapY + 170, 48, H - obs.gapY - 170);
+      }
+      ctx.fillStyle = "#34d399";
+      ctx.beginPath();
+      ctx.moveTo(100, game.runnerY + 14);
+      ctx.lineTo(58, game.runnerY);
+      ctx.lineTo(58, game.runnerY + 28);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 22px system-ui";
+      ctx.fillText(`分数 ${game.score}`, 24, 96);
+      if (!game.started) {
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#e5e7eb";
+        ctx.fillText("点击开始", W / 2, H / 2);
+      }
+      drawEnd();
+    };
 
+    const updateMemory = () => {
+      drawBase("记忆翻牌", "14 步内翻出相同符文，全部配对成功");
+      const cols = 4;
+      const cardW = 110;
+      const cardH = 86;
+      const startX = (W - cols * cardW - 3 * 14) / 2;
+      const startY = 82;
+      game.memoryCards.forEach((card, i) => {
+        const x = startX + (i % cols) * (cardW + 14);
+        const y = startY + Math.floor(i / cols) * (cardH + 14);
+        ctx.fillStyle = card.flipped || card.matched ? "#1e293b" : "#312e81";
+        ctx.strokeStyle = card.matched ? "#34d399" : "#6366f1";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(x, y, cardW, cardH, 8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 28px system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText(card.flipped || card.matched ? card.symbol : "?", x + cardW / 2, y + 52);
+      });
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 18px system-ui";
+      ctx.textAlign = "left";
+      ctx.fillText(`配对 ${game.score}/6  步数 ${game.memoryMoves}/14`, 24, 96);
+      drawEnd();
+    };
+
+    const updateLink = () => {
+      drawBase("能量连线", "依次点击同色节点，错 4 次会失败");
+      ctx.lineWidth = 5;
+      for (const color of Object.keys(game.linkPairs)) {
+        const pair = game.linkPoints.filter((p) => p.color === color);
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(pair[0].x, pair[0].y);
+        ctx.lineTo(pair[1].x, pair[1].y);
+        ctx.stroke();
+      }
+      for (const point of game.linkPoints) {
+        ctx.fillStyle = point.color;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, game.linkSelected === point.id ? 28 : 20, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#f8fafc";
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 18px system-ui";
+      ctx.textAlign = "left";
+      ctx.fillText(`已连接 ${Object.keys(game.linkPairs).length}/4  失误 ${game.linkMistakes}/4`, 24, 96);
+      drawEnd();
+    };
+
+    const updateDefense = (dt: number) => {
+      drawBase("小队守线", "点击对应路线击退敌人，守住 45 秒");
+      if (game.started && !game.ended) {
+        game.defenseTime -= dt;
+        game.defenseSpawn -= dt;
+        if (game.defenseSpawn <= 0) {
+          game.defenseEnemies.push({
+            lane: Math.floor(Math.random() * 3),
+            x: W + 20,
+            speed: 90 + Math.random() * 45 + game.score * 1.5,
+          });
+          game.defenseSpawn = Math.max(0.45, 1.25 - game.score * 0.025);
+        }
+        for (const enemy of game.defenseEnemies) enemy.x -= enemy.speed * dt;
+        const leaks = game.defenseEnemies.filter((enemy) => enemy.x < 108);
+        if (leaks.length) {
+          game.defenseHp -= leaks.length;
+          game.defenseEnemies = game.defenseEnemies.filter((enemy) => enemy.x >= 108);
+          blip(140);
+        }
+        if (game.defenseHp <= 0) finish(false);
+        if (game.defenseTime <= 0) finish(true);
+      }
+      for (let lane = 0; lane < 3; lane++) {
+        const y = 130 + lane * 100;
+        ctx.strokeStyle = "#334155";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(110, y);
+        ctx.lineTo(W - 70, y);
+        ctx.stroke();
+        ctx.fillStyle = "#38bdf8";
+        ctx.fillRect(70, y - 22, 34, 44);
+      }
+      ctx.fillStyle = "#f87171";
+      for (const enemy of game.defenseEnemies) {
+        const y = 130 + enemy.lane * 100;
+        ctx.beginPath();
+        ctx.arc(enemy.x, y, 18, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 18px system-ui";
+      ctx.textAlign = "left";
+      ctx.fillText(`生命 ${game.defenseHp}  剩余 ${Math.ceil(game.defenseTime)}s  击退 ${game.score}`, 24, 96);
+      if (!game.started) {
+        ctx.textAlign = "center";
+        ctx.fillText("点击任意路线开始", W / 2, H / 2);
+      }
+      drawEnd();
+    };
+
+    const gameLoop = (time: number) => {
+      const dt = Math.min((time - lastTime) / 1000 || 0, 0.033);
+      lastTime = time;
+      if (selectedGame === "runner") updateRunner(dt);
+      if (selectedGame === "memory") updateMemory();
+      if (selectedGame === "link") updateLink();
+      if (selectedGame === "defense") updateDefense(dt);
       animationId = requestAnimationFrame(gameLoop);
     };
 
-    gameLoop();
+    animationId = requestAnimationFrame(gameLoop);
 
     return () => {
       stopBgm();
@@ -1104,15 +1318,42 @@ function WaitingMiniGame({
       canvas.removeEventListener("click", handleClick);
       window.removeEventListener("keydown", handleKey);
     };
-  }, []);
+  }, [createState, round, selectedGame]);
 
   return (
-    <div className="relative flex h-full w-full flex-col items-center justify-center gap-4 bg-zinc-900 p-4">
+    <div className="relative flex h-full w-full flex-col items-center justify-center gap-3 bg-zinc-900 p-4">
+      <div className="flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-800 bg-zinc-950/70 p-2">
+        <div className="grid flex-1 grid-cols-2 gap-2 md:grid-cols-4">
+          {games.map((game) => (
+            <button
+              key={game.id}
+              type="button"
+              onClick={() => switchGame(game.id)}
+              className={[
+                "rounded-md border px-3 py-2 text-left transition",
+                selectedGame === game.id
+                  ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-100"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700",
+              ].join(" ")}
+            >
+              <span className="block text-sm font-semibold">{game.name}</span>
+              <span className="mt-0.5 block truncate text-xs text-zinc-500">{game.desc}</span>
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => resetGame()}
+          className="shrink-0 rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800"
+        >
+          重开本局
+        </button>
+      </div>
       <canvas
         ref={canvasRef}
         width={800}
         height={500}
-        className="max-h-[65%] max-w-full rounded-lg shadow-2xl"
+        className="max-h-[58%] max-w-full rounded-lg shadow-2xl"
         style={{ imageRendering: "pixelated" }}
       />
 
@@ -1149,22 +1390,42 @@ function WaitingMiniGame({
       
       {gameReady && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-zinc-800 rounded-xl p-6 text-center shadow-2xl border border-zinc-700">
+          <div className="w-[min(420px,calc(100%-32px))] rounded-lg border border-zinc-700 bg-zinc-800 p-5 text-center shadow-2xl">
             <div className="text-4xl mb-4">🎉</div>
             <h3 className="text-xl font-bold mb-2">游戏生成完成！</h3>
-            <p className="text-zinc-400 mb-4">你的游戏已经准备好了</p>
-            <button
-              onClick={onViewGame}
-              className="w-full rounded-lg bg-gradient-to-r from-indigo-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-white hover:opacity-90 transition"
-            >
-              查看我的游戏
-            </button>
+            <p className="text-zinc-400 mb-4">你的游戏已经准备好了，也可以继续玩等待小游戏。</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <button
+                type="button"
+                onClick={onViewGame}
+                className="rounded-md bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 sm:col-span-3"
+              >
+                查看我的游戏
+              </button>
+              <button
+                type="button"
+                onClick={() => resetGame()}
+                className="rounded-md border border-zinc-600 px-3 py-2 text-xs text-zinc-200 transition hover:bg-zinc-700"
+              >
+                重开本局
+              </button>
+              <button
+                type="button"
+                onClick={switchNextGame}
+                className="rounded-md border border-zinc-600 px-3 py-2 text-xs text-zinc-200 transition hover:bg-zinc-700"
+              >
+                换个小游戏
+              </button>
+              <span className="rounded-md border border-zinc-700 px-3 py-2 text-xs text-zinc-400">
+                当前：{currentGame.name}
+              </span>
+            </div>
           </div>
         </div>
       )}
       
       <div className="absolute bottom-4 left-4 text-xs text-zinc-500">
-        空格/点击跳跃 | 边玩边等待
+        {currentGame.name} | 边玩边等待
       </div>
     </div>
   );
