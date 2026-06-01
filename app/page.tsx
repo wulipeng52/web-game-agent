@@ -563,7 +563,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="grid min-h-0 flex-1 grid-rows-[auto_minmax(420px,1fr)] overflow-hidden lg:grid-rows-[minmax(360px,42vh)_minmax(0,1fr)]">
+      <section className="grid min-h-[calc(100vh-65px)] flex-1 grid-rows-[auto_minmax(860px,1fr)] lg:grid-rows-[minmax(360px,42vh)_minmax(1040px,1fr)]">
         <div className="grid min-h-0 border-b border-zinc-800 lg:grid-cols-[380px_minmax(0,1fr)]">
           <section className="flex min-h-0 flex-col border-b border-zinc-800 bg-[#0f1217] lg:border-b-0 lg:border-r">
             <div className="border-b border-zinc-800 px-4 py-3">
@@ -688,7 +688,7 @@ export default function Home() {
           </section>
         </div>
 
-        <section className="flex min-h-0 flex-col bg-zinc-950">
+        <section className="flex min-h-[860px] flex-col bg-zinc-950 lg:min-h-[1040px]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-[#101318] px-4 py-2.5">
             <div className="flex items-center gap-3">
               <h2 className="text-sm font-semibold text-zinc-100">游戏预览</h2>
@@ -1430,4 +1430,3 @@ function WaitingMiniGame({
     </div>
   );
 }
-
