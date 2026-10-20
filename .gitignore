@@ -43,3 +43,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local AI tool configs
+/.claude/
+/.codex/
+
+# server credentials / local scripts (never commit)
+ssh_connect.py

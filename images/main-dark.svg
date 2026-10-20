@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600">
+  <rect width="100%" height="100%" fill="#0f1720"/>
+  <text x="50%" y="45%" font-size="36" text-anchor="middle" fill="#2ee6e6">Game Weaver — 深色主题预览占位图</text>
+  <text x="50%" y="55%" font-size="20" text-anchor="middle" fill="#9aa6b2">替换为 images/main-dark.png 即可显示真实截图</text>
+</svg>

@@ -1,26 +1,120 @@
 @import "tailwindcss";
 
+/* ===== Light Theme (default) ===== */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg-base: #f5f3f0;
+  --bg-surface: rgba(255, 255, 255, 0.72);
+  --bg-surface-solid: #ffffff;
+  --bg-elevated: rgba(255, 255, 255, 0.88);
+  --bg-canvas: #ebe7e2;
+  --text-primary: #1c1917;
+  --text-secondary: #57534e;
+  --text-muted: #a8a29e;
+  --border-subtle: rgba(120, 113, 108, 0.12);
+  --border-strong: rgba(120, 113, 108, 0.2);
+  --accent: #1c1917;
+  --accent-hover: #292524;
+  --success: #0d6b5e;
+  --success-hover: #0f7d6e;
+  --warning: #b45309;
+  --warning-hover: #c4620a;
+  --danger-bg: rgba(254, 242, 240, 0.8);
+  --danger-border: rgba(245, 198, 191, 0.6);
+  --danger-text: #b91c1c;
+  --glass-blur: 16px;
+  --glass-saturate: 1.4;
+  --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04);
+  --shadow-md: 0 4px 16px rgba(28, 25, 23, 0.06);
+  --shadow-lg: 0 8px 32px rgba(28, 25, 23, 0.08);
+  --header-bg: rgba(252, 251, 249, 0.72);
+  --aside-bg: rgba(252, 251, 249, 0.64);
+}
+
+/* ===== Dark Theme ===== */
+.dark {
+  --bg-base: #1a1816;
+  --bg-surface: rgba(40, 38, 36, 0.64);
+  --bg-surface-solid: #282624;
+  --bg-elevated: rgba(50, 47, 44, 0.78);
+  --bg-canvas: #141312;
+  --text-primary: #e7e3de;
+  --text-secondary: #a8a29e;
+  --text-muted: #78716c;
+  --border-subtle: rgba(168, 162, 158, 0.1);
+  --border-strong: rgba(168, 162, 158, 0.18);
+  --accent: #e7e3de;
+  --accent-hover: #f5f3f0;
+  --success: #2dd4bf;
+  --success-hover: #5eead4;
+  --warning: #fbbf24;
+  --warning-hover: #fcd34d;
+  --danger-bg: rgba(185, 28, 28, 0.15);
+  --danger-border: rgba(185, 28, 28, 0.25);
+  --danger-text: #fca5a5;
+  --glass-blur: 20px;
+  --glass-saturate: 1.2;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.28);
+  --header-bg: rgba(26, 24, 22, 0.72);
+  --aside-bg: rgba(26, 24, 22, 0.56);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: Arial, Helvetica, sans-serif;
-  --font-mono: "Consolas", "Courier New", monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-background: var(--bg-base);
+  --color-foreground: var(--text-primary);
+  --font-display: "DM Serif Display", "Times New Roman", serif;
+  --font-body: "DM Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "DM Sans", "Helvetica Neue", Arial, sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+input, textarea {
+  color: var(--text-primary);
+  background: var(--bg-surface-solid);
+  border-color: var(--border-subtle);
+}
+
+/* Refined scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ===== Glass surface utility ===== */
+.glass {
+  background: var(--bg-surface);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--border-subtle);
+}
+
+.glass-elevated {
+  background: var(--bg-elevated);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+/* ===== Frosted floating panel ===== */
+.frosted-panel {
+  background: var(--bg-elevated);
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-lg);
+  border-radius: 16px;
 }

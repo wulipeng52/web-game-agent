@@ -36,6 +36,14 @@ type GenerationPhase = "idle" | "plan" | "game" | "done";
 type PlanSectionKey = keyof PlanData;
 type GenerationStageKey = "code" | "assets" | "review" | "repair" | "audio" | "done";
 
+type HistoryEntry = {
+  id: string;
+  idea: string;
+  plan: PlanData;
+  previewHtml: string;
+  createdAt: number;
+};
+
 const generationStages: Array<{ key: GenerationStageKey; label: string }> = [
   { key: "code", label: "生成代码中" },
   { key: "assets", label: "替换美术资源中" },
@@ -95,6 +103,53 @@ function clearStorage() {
   }
 }
 
+const HISTORY_KEY = "game-weaver-history";
+const MAX_HISTORY = 20;
+
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return "刚刚";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 小时前`;
+  const days = Math.floor(hr / 24);
+  if (days < 30) return `${days} 天前`;
+  const months = Math.floor(days / 30);
+  return `${months} 月前`;
+}
+
+function loadHistory(): HistoryEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (raw) return JSON.parse(raw) as HistoryEntry[];
+  } catch { /* ignore */ }
+  return [];
+}
+
+function saveHistory(entries: HistoryEntry[]) {
+  if (typeof window === "undefined") return;
+  try {
+    const trimmed = entries.slice(0, MAX_HISTORY);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+  } catch { /* ignore */ }
+}
+
+function pushToHistory(entry: HistoryEntry): HistoryEntry[] {
+  const existing = loadHistory();
+  const updated = [entry, ...existing.filter((e) => e.id !== entry.id)];
+  saveHistory(updated);
+  return updated;
+}
+
+function removeFromHistory(id: string): HistoryEntry[] {
+  const updated = loadHistory().filter((e) => e.id !== id);
+  saveHistory(updated);
+  return updated;
+}
+
 export default function Home() {
   const [idea, setIdea] = useState<string>("");
 
@@ -120,11 +175,28 @@ export default function Home() {
   const [generationStageNote, setGenerationStageNote] = useState("");
 
   const [hasRestoredFromCache, setHasRestoredFromCache] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [isDark, setIsDark] = useState(false);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("gw-theme");
+    const dark = stored === "dark";
+    setIsDark(dark);
+    document.documentElement.classList.toggle("dark", dark);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    const next = !isDark;
+    setIsDark(next);
+    localStorage.setItem("gw-theme", next ? "dark" : "light");
+    document.documentElement.classList.toggle("dark", next);
+  }, [isDark]);
 
   /** 避免在 useState 初始化里读 localStorage，防止 SSR 与客户端首帧 DOM 不一致 */
   useEffect(() => {
     let cancelled = false;
     const saved = loadFromStorage();
+    setHistory(loadHistory());
     if (!saved) {
       return;
     }
@@ -160,6 +232,26 @@ export default function Home() {
     setGenerationStage(null);
     setGenerationStageNote("");
     setHasRestoredFromCache(false);
+  }, []);
+
+  // 从历史恢复
+  const handleRestoreHistory = useCallback((entry: HistoryEntry) => {
+    setIdea(entry.idea);
+    setPlan(entry.plan);
+    setPreviewHtml(entry.previewHtml);
+    setPhase("done");
+    setError("");
+    setShowMiniGame(false);
+    setGameReady(true);
+    setGenerationStage("done");
+    setGenerationStageNote("");
+    saveToStorage({ idea: entry.idea, plan: entry.plan, previewHtml: entry.previewHtml });
+  }, []);
+
+  // 删除历史记录
+  const handleDeleteHistory = useCallback((id: string) => {
+    const updated = removeFromHistory(id);
+    setHistory(updated);
   }, []);
 
   const isPlanReady = useMemo(
@@ -309,6 +401,15 @@ export default function Home() {
                 setGenerationStage("done");
                 setGenerationStageNote("游戏已生成，可试玩或保存。");
                 setGameReady(true);
+                // 自动保存到历史
+                const entry: HistoryEntry = {
+                  id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                  idea,
+                  plan: { ...plan },
+                  previewHtml: nextHtml,
+                  createdAt: Date.now(),
+                };
+                setHistory(pushToHistory(entry));
               }
             } catch {
               // 忽略解析错误
@@ -419,6 +520,15 @@ export default function Home() {
                 setGenerationStageNote("微调完成，可试玩或保存。");
                 setGameReady(true);
                 setTweakRequest("");
+                // 自动保存到历史
+                const entry: HistoryEntry = {
+                  id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                  idea,
+                  plan: { ...plan },
+                  previewHtml: data.html,
+                  createdAt: Date.now(),
+                };
+                setHistory(pushToHistory(entry));
               }
             } catch {
               // 忽略解析错误
@@ -528,34 +638,29 @@ export default function Home() {
   const completedSections = planSections.filter((section) => plan[section.key].trim()).length;
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#0b0d10] text-zinc-100">
-      <header className="shrink-0 border-b border-zinc-800 bg-[#101318] px-5 py-3">
+    <main className="flex h-screen flex-col overflow-hidden" style={{ background: "var(--bg-base)", color: "var(--text-primary)" }}>
+      {/* Header — glass */}
+      <header className="glass shrink-0 px-6 py-3" style={{ background: "var(--header-bg)", borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-semibold tracking-tight text-zinc-50">Game Weaver</h1>
-              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">
-                一句话生成游戏
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-zinc-500">上半区完成创意与策划，下半区专注预览试玩。</p>
+          <div className="flex items-center gap-3 min-w-0">
+            <h1 className="text-lg italic tracking-tight" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+              Game Weaver
+            </h1>
+            <span className="rounded-full border px-2.5 py-0.5 text-[11px] font-medium tracking-wide"
+              style={{ borderColor: "var(--border-strong)", color: "var(--text-muted)", background: "var(--bg-surface)" }}>
+              创意 → 策划 → 游戏
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            {hasRestoredFromCache && (idea || previewHtml) ? (
-              <button
-                type="button"
-                onClick={() => setHasRestoredFromCache(false)}
-                className="rounded-md border border-emerald-700/50 bg-emerald-950/40 px-2.5 py-1.5 text-xs text-emerald-300"
-              >
-                已恢复进度
-              </button>
-            ) : null}
+            <button type="button" onClick={toggleTheme}
+              className="rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition hover:shadow-sm"
+              style={{ borderColor: "var(--border-strong)", color: "var(--text-secondary)", background: "var(--bg-surface)" }}>
+              {isDark ? "☀ 浅色" : "🌙 深色"}
+            </button>
             {(idea || previewHtml || plan.mechanics) ? (
-              <button
-                onClick={handleClearProgress}
-                disabled={isLoading}
-                className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-800 disabled:opacity-50"
-              >
+              <button onClick={handleClearProgress} disabled={isLoading}
+                className="rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition hover:shadow-sm disabled:opacity-40"
+                style={{ borderColor: "var(--border-strong)", color: "var(--text-muted)", background: "var(--bg-surface)" }}>
                 清除
               </button>
             ) : null}
@@ -563,156 +668,260 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="grid min-h-[calc(100vh-65px)] flex-1 grid-rows-[auto_minmax(860px,1fr)] lg:grid-rows-[minmax(360px,42vh)_minmax(1040px,1fr)]">
-        <div className="grid min-h-0 border-b border-zinc-800 lg:grid-cols-[380px_minmax(0,1fr)]">
-          <section className="flex min-h-0 flex-col border-b border-zinc-800 bg-[#0f1217] lg:border-b-0 lg:border-r">
-            <div className="border-b border-zinc-800 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-zinc-100">创意输入</h2>
-                  <p className="mt-0.5 text-xs text-zinc-500">写玩法、题材、氛围，也可以直接写限制。</p>
-                </div>
-                <span className="text-xs text-zinc-500">{idea.trim().length} 字</span>
+      {/* Main workspace — side by side */}
+      <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
+        {/* ===== LEFT PANEL — glass ===== */}
+        <aside className="w-full shrink-0 overflow-y-auto lg:w-[432px] lg:border-r"
+          style={{ background: "var(--aside-bg)", borderColor: "var(--border-subtle)", backdropFilter: "blur(var(--glass-blur))", WebkitBackdropFilter: "blur(var(--glass-blur))" }}>
+          {/* Creative input — glass card */}
+          <section className="px-4 py-3">
+            <div className="glass rounded-2xl p-3">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div>
+                <h2 className="text-sm font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                  创意输入
+                </h2>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>描述玩法、题材、氛围或限制条件</p>
               </div>
+              <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>{idea.trim().length} 字</span>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-              <textarea
-                value={idea}
-                onChange={(e) => setIdea(e.target.value)}
-                disabled={isLoading}
-                className="h-32 shrink-0 resize-none rounded-md border border-zinc-800 bg-[#151922] p-3 text-sm leading-6 text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-indigo-500/80 focus:ring-1 focus:ring-indigo-500/30 disabled:opacity-50 lg:min-h-0 lg:flex-1"
-                placeholder="例如：做一个月蚀酒馆里的卡牌战斗游戏，玩家用记忆、谎言和契约组成牌组，对抗会改变规则的客人。"
-              />
-              {error ? (
-                <div className="rounded-md border border-red-900/70 bg-red-950/40 px-3 py-2 text-xs text-red-200">{error}</div>
-              ) : null}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={!idea.trim() || isLoading}
-                  onClick={handleOneClick}
-                  className="rounded-md bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {phase === "plan" ? (
-                    <span className="flex items-center justify-center gap-2"><LoadingSpinner />生成策划中</span>
-                  ) : "生成策划"}
-                </button>
-                <button
-                  type="button"
-                  disabled={!isPlanReady || isLoading}
-                  onClick={handleGenerateGame}
-                  className="rounded-md bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {phase === "game" ? (
-                    <span className="flex items-center justify-center gap-2"><LoadingSpinner />生成游戏中</span>
-                  ) : "生成游戏"}
-                </button>
+            <textarea
+              value={idea}
+              onChange={(e) => setIdea(e.target.value)}
+              disabled={isLoading}
+              className="h-28 w-full resize-none rounded-xl border px-3.5 py-3 text-[13px] leading-relaxed outline-none transition duration-200 disabled:opacity-50"
+              style={{
+                color: "var(--text-primary)",
+                background: "var(--bg-surface-solid)",
+                borderColor: "var(--border-subtle)",
+              }}
+              placeholder="例如：做一个月蚀酒馆里的卡牌战斗游戏，玩家用记忆、谎言和契约组成牌组，对抗会改变规则的客人。"
+            />
+            {error ? (
+              <div className="mt-3 rounded-xl border px-3.5 py-2.5 text-[12px]" style={{ borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)" }}>
+                {error}
               </div>
-              <button
-                type="button"
-                disabled={!idea.trim() || isLoading}
-                onClick={handleGeneratePlan}
-                className="rounded-md border border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-400 transition hover:border-zinc-700 hover:bg-zinc-900 disabled:opacity-50"
-              >
-                重新生成策划
+            ) : null}
+            <div className="mt-3 grid grid-cols-2 gap-2.5">
+              <button type="button" disabled={!idea.trim() || isLoading} onClick={handleOneClick}
+                className="rounded-xl px-4 py-2.5 text-[13px] font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-40"
+                style={{ background: "var(--accent)", color: "var(--bg-base)" }}>
+                {phase === "plan" ? <span className="flex items-center justify-center gap-1.5"><LinePulse />生成策划中</span> : "生成策划"}
               </button>
+              <button type="button" disabled={!isPlanReady || isLoading} onClick={handleGenerateGame}
+                className="rounded-xl px-4 py-2.5 text-[13px] font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-40"
+                style={{ background: "var(--success)", color: "var(--bg-base)" }}>
+                {phase === "game" ? <span className="flex items-center justify-center gap-1.5"><LinePulse />生成游戏中</span> : "生成游戏"}
+              </button>
+            </div>
+            <button type="button" disabled={!idea.trim() || isLoading} onClick={handleGeneratePlan}
+              className="mt-2.5 w-full rounded-xl border py-2 text-[12px] font-medium transition duration-200 disabled:opacity-50"
+              style={{ color: "var(--text-secondary)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}>
+              重新生成策划
+            </button>
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col bg-[#0c0f14]">
-            <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+          {/* Plan sections — glass card */}
+          <section className="px-4 py-3">
+            <div className="glass rounded-2xl p-3">
+            <div className="flex items-center justify-between gap-2 mb-3">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-100">六个策划块</h2>
-                <p className="mt-0.5 text-xs text-zinc-500">卡牌式切换，右侧编辑当前块。</p>
+                <h2 className="text-sm font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                  策划板块
+                </h2>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>点击卡片切换编辑</p>
               </div>
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
-                <span className="rounded-md border border-zinc-800 px-2 py-1">{completedSections}/6</span>
-                <span className={isPlanReady ? "text-emerald-300" : "text-zinc-500"}>
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="rounded-lg border px-1.5 py-0.5" style={{ borderColor: "var(--border-strong)", color: "var(--text-muted)", background: "var(--bg-surface-solid)" }}>
+                  {completedSections}/6
+                </span>
+                <span style={{ color: isPlanReady ? "var(--success)" : "var(--text-muted)" }}>
                   {isPlanReady ? "可生成" : "待完善"}
                 </span>
               </div>
             </div>
 
-            <div className="grid min-h-0 flex-1 gap-4 p-4 xl:grid-cols-[minmax(340px,440px)_minmax(0,1fr)]">
-              <div className="grid auto-rows-fr grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2">
-                {planSections.map((section) => {
-                  const filled = plan[section.key].trim().length > 0;
-                  const active = activeSection.key === section.key;
-                  return (
-                    <button
-                      key={section.key}
-                      type="button"
-                      onClick={() => setExpandedSection(section.key)}
-                      disabled={isLoading}
-                      className={[
-                        "group flex min-h-[82px] flex-col justify-between rounded-md border p-3 text-left transition disabled:opacity-50",
-                        active
-                          ? "border-indigo-400 bg-indigo-500/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
-                          : "border-zinc-800 bg-[#141821] hover:border-zinc-700 hover:bg-[#181d27]",
-                      ].join(" ")}
-                    >
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-zinc-500">{section.short}</span>
-                        <span className={filled ? "h-2 w-2 rounded-full bg-emerald-400" : "h-2 w-2 rounded-full bg-zinc-700"} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-semibold text-zinc-100">{section.title}</span>
-                        <span className="mt-1 block truncate text-xs text-zinc-500">
-                          {filled ? plan[section.key].replace(/[#*_`>-]/g, " ").trim() : "等待生成或手动填写"}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              {planSections.map((section) => {
+                const filled = plan[section.key].trim().length > 0;
+                const active = activeSection.key === section.key;
+                return (
+                  <button key={section.key} type="button" onClick={() => setExpandedSection(section.key)} disabled={isLoading}
+                    className="flex items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition duration-200 disabled:opacity-50"
+                    style={{
+                      borderColor: active ? "var(--border-strong)" : "var(--border-subtle)",
+                      background: active ? "var(--bg-surface)" : "transparent",
+                      color: "var(--text-primary)",
+                    }}>
+                    <span className="h-1.5 w-1.5 rounded-full shrink-0"
+                      style={{ background: filled ? "var(--success)" : "var(--text-muted)" }} />
+                    <span className="text-[12px] font-semibold truncate">{section.short}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-              <div className="flex min-h-[220px] flex-col rounded-md border border-zinc-800 bg-[#11151d]">
-                <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-3 py-2.5">
-                  <div className="min-w-0">
-                    <h3 className="truncate text-sm font-semibold text-zinc-100">{activeSection.title}</h3>
-                    <p className="text-xs text-zinc-500">生成游戏会使用这里的最新内容。</p>
-                  </div>
-                  <span className="shrink-0 rounded-md bg-zinc-900 px-2 py-1 text-xs text-zinc-400">
-                    {plan[activeSection.key].trim().length} 字
-                  </span>
-                </div>
-                <textarea
-                  value={plan[activeSection.key]}
-                  onChange={(e) => setPlan((p) => ({ ...p, [activeSection.key]: e.target.value }))}
-                  disabled={isLoading}
-                  className="min-h-[180px] flex-1 resize-none rounded-b-md bg-transparent p-3 text-xs leading-6 text-zinc-200 outline-none placeholder:text-zinc-600 disabled:opacity-50 lg:min-h-0"
-                  placeholder={`在这里编辑「${activeSection.title}」...`}
-                />
+            <div className="flex flex-col rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface-solid)" }}>
+              <div className="flex items-center justify-between gap-2 px-3.5 py-2" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                <h3 className="text-[12px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>{activeSection.title}</h3>
+                <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>{plan[activeSection.key].trim().length} 字</span>
               </div>
+              <textarea value={plan[activeSection.key]} onChange={(e) => setPlan((p) => ({ ...p, [activeSection.key]: e.target.value }))} disabled={isLoading}
+                className="min-h-[140px] flex-1 resize-none bg-transparent px-3.5 py-2.5 text-[12px] leading-relaxed outline-none disabled:opacity-50"
+                style={{ color: "var(--text-primary)" }}
+                placeholder={`编辑「${activeSection.title}」...`} />
+            </div>
             </div>
           </section>
-        </div>
 
-        <section className="flex min-h-[860px] flex-col bg-zinc-950 lg:min-h-[1040px]">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-[#101318] px-4 py-2.5">
-            <div className="flex items-center gap-3">
-              <h2 className="text-sm font-semibold text-zinc-100">游戏预览</h2>
-              <span className="rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-500">
+          {/* Tweak controls — glass card */}
+          {previewHtml && !showMiniGame ? (
+            <section className="px-4 py-3">
+              <div className="glass rounded-2xl p-3">
+              <h2 className="text-sm font-semibold mb-3" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                微调游戏
+              </h2>
+              <div className="flex flex-col gap-2.5">
+                <input type="text" value={tweakRequest}
+                  onChange={(e) => setTweakRequest(e.target.value)}
+                  disabled={isLoading || isGeneratingVideo || isSynthesizingBgm}
+                  placeholder="例如：降低敌人速度、增加防御牌..."
+                  className="w-full rounded-xl border px-3.5 py-2.5 text-[13px] outline-none transition duration-200 disabled:opacity-50"
+                  style={{ color: "var(--text-primary)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleTweakGame(); } }} />
+                <div className="grid grid-cols-3 gap-2">
+                  <button type="button" disabled={!tweakRequest.trim() || isLoading || isGeneratingVideo || isSynthesizingBgm}
+                    onClick={handleTweakGame}
+                    className="rounded-xl px-3 py-2 text-[12px] font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    style={{ background: "var(--warning)", color: "var(--bg-base)" }}>
+                    {isTweaking ? "微调中…" : "微调游戏"}
+                  </button>
+                  <button type="button" disabled={!previewHtml || !plan.music?.trim() || isLoading || isSynthesizingBgm}
+                    onClick={handleSynthesizeBgm}
+                    className="rounded-xl border px-3 py-2 text-[12px] font-medium transition duration-200 disabled:opacity-40"
+                    style={{ color: "var(--text-secondary)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}>
+                    {isSynthesizingBgm ? "语音中…" : "语音"}
+                  </button>
+                  <button type="button" onClick={handleDownload}
+                    className="rounded-xl border px-3 py-2 text-[12px] font-medium transition duration-200"
+                    style={{ color: "var(--text-secondary)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}>
+                    保存
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                <button type="button"
+                  disabled={!plan.lore?.trim() || !previewHtml?.trim() || isLoading || isGeneratingVideo || isSynthesizingBgm}
+                  onClick={handleGenerateVideo}
+                  className="hover:underline underline-offset-2 transition disabled:pointer-events-none disabled:opacity-40"
+                  style={{ color: "var(--text-secondary)" }}>
+                  {isGeneratingVideo ? "预告生成中…" : "生成预告"}
+                </button>
+                {videoStatus ? <span>{videoStatus}</span> : null}
+                {videoUrl ? <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: "var(--text-secondary)" }}>查看视频</a> : null}
+              </div>
+              </div>
+            </section>
+          ) : null}
+
+          {/* History — glass card */}
+          <section className="px-4 py-3">
+            <div className="glass rounded-2xl p-3">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div>
+                <h2 className="text-sm font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                  生成历史
+                </h2>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>最近 {MAX_HISTORY} 条生成记录</p>
+              </div>
+              {history.length > 0 ? (
+                <button type="button" onClick={() => { saveHistory([]); setHistory([]); }}
+                  className="text-[11px] hover:underline" style={{ color: "var(--text-muted)" }}>
+                  清空
+                </button>
+              ) : null}
+            </div>
+            {history.length === 0 ? (
+              <div className="py-4 text-center">
+                <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>暂无历史记录</p>
+                <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>生成游戏后自动保存到这里</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {history.slice(0, 8).map((entry) => (
+                  <div key={entry.id} className="group flex items-start gap-2.5 rounded-xl border px-3 py-2.5 transition duration-200 cursor-pointer"
+                    style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface-solid)" }}
+                    onClick={() => handleRestoreHistory(entry)}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                        {entry.idea || "（无创意文本）"}
+                      </p>
+                      <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                        {formatRelativeTime(entry.createdAt)}
+                        <span className="mx-1">·</span>
+                        {entry.previewHtml.length > 0 ? "有预览" : "无预览"}
+                      </p>
+                    </div>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); handleDeleteHistory(entry.id); }}
+                      className="shrink-0 rounded-lg p-1 opacity-0 transition group-hover:opacity-100"
+                      style={{ color: "var(--text-muted)" }} title="删除">
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                        <path d="M18 6L6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+                {history.length > 8 ? (
+                  <p className="text-[11px] text-center" style={{ color: "var(--text-muted)" }}>
+                    还有 {history.length - 8} 条记录未显示
+                  </p>
+                ) : null}
+              </div>
+            )}
+            </div>
+          </section>
+
+        </aside>
+
+        {/* ===== RIGHT PANEL — glass ===== */}
+        <section className="flex flex-1 flex-col min-h-0" style={{ background: "var(--bg-canvas)" }}>
+          <div className="glass flex flex-wrap items-center justify-between gap-2 px-6 py-2.5 shrink-0"
+            style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-[13px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                预览
+              </h2>
+              <span className="rounded-lg border px-2 py-0.5 text-[11px]" style={{ borderColor: "var(--border-strong)", color: "var(--text-secondary)", background: "var(--bg-surface)" }}>
                 {showMiniGame && isLoading ? "等待中" : showMiniGame && gameReady ? "已生成" : previewHtml ? "可试玩" : "未生成"}
               </span>
               {isLoading ? (
-                <span className="flex items-center gap-1 text-xs text-emerald-300">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  {phase === "plan" ? "生成策划" : isTweaking ? "微调中" : isSynthesizingBgm ? "合成语音" : "生成游戏"}
+                <span className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                  <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: "var(--warning)" }} />
+                  {phase === "plan" ? "策划中" : isTweaking ? "微调中" : isSynthesizingBgm ? "语音中" : "生成中"}
                 </span>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
               {showMiniGame && previewHtml ? (
-                <button onClick={handleViewGeneratedGame} className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400">查看游戏</button>
+                <button onClick={handleViewGeneratedGame}
+                  className="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition duration-200"
+                  style={{ background: "var(--accent)", color: "var(--bg-base)" }}>
+                  查看游戏
+                </button>
               ) : null}
-              {previewHtml ? (
-                <button onClick={handleDownload} className="rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-white">保存游戏</button>
+              {previewHtml && !showMiniGame ? (
+                <button onClick={handleDownload}
+                  className="rounded-xl border px-3 py-1.5 text-[12px] font-medium transition duration-200"
+                  style={{ color: "var(--text-secondary)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}>
+                  保存
+                </button>
               ) : null}
             </div>
           </div>
 
-          <div className="relative min-h-0 flex-1">
+          <div className="glass-elevated relative flex-1 min-h-0"
+            style={{ overflow: "hidden" }}>
             {showMiniGame ? (
               <WaitingMiniGame
                 gameReady={gameReady}
@@ -723,80 +932,42 @@ export default function Home() {
             ) : previewHtml ? (
               <iframe
                 title="game-preview"
-                className="h-full w-full bg-white"
+                className="h-full w-full"
+                style={{ background: "#ffffff" }}
                 sandbox="allow-scripts allow-same-origin allow-pointer-lock"
                 srcDoc={previewHtml}
               />
             ) : (
-              <div className="flex h-full items-center justify-center text-zinc-600">
+              <div className="flex h-full items-center justify-center">
                 <div className="text-center">
-                  <div className="mb-3 text-5xl">🎮</div>
-                  <p className="text-sm text-zinc-500">生成后这里显示可玩预览。</p>
+                  <svg className="mx-auto mb-4 h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"
+                    style={{ color: "var(--text-muted)", opacity: 0.5 }}>
+                    <rect x="2" y="3" width="20" height="14" rx="2" />
+                    <path d="M8 21h8" /><path d="M12 17v4" />
+                  </svg>
+                  <p className="text-[13px] font-medium" style={{ color: "var(--text-secondary)" }}>
+                    生成后这里显示可玩预览
+                  </p>
+                  <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                    在左侧输入创意，点击「生成策划」开始
+                  </p>
                 </div>
               </div>
             )}
           </div>
-
-          {previewHtml && !showMiniGame ? (
-            <div className="border-t border-zinc-800 bg-[#101318] p-3">
-              <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
-                <input
-                  type="text"
-                  value={tweakRequest}
-                  onChange={(e) => setTweakRequest(e.target.value)}
-                  disabled={isLoading || isGeneratingVideo || isSynthesizingBgm}
-                  placeholder="微调游戏，例如：降低敌人速度、增加防御牌、让第一回合更宽容..."
-                  className="min-w-0 rounded-md border border-zinc-800 bg-[#151922] px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-amber-500 disabled:opacity-50"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleTweakGame();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  disabled={!tweakRequest.trim() || isLoading || isGeneratingVideo || isSynthesizingBgm}
-                  onClick={handleTweakGame}
-                  className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {isTweaking ? "微调中" : "微调游戏"}
-                </button>
-                <button
-                  type="button"
-                  disabled={!previewHtml || !plan.music?.trim() || isLoading || isSynthesizingBgm}
-                  onClick={handleSynthesizeBgm}
-                  className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-800 disabled:opacity-40"
-                >
-                  {isSynthesizingBgm ? "语音中" : "语音"}
-                </button>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
-                <button
-                  type="button"
-                  disabled={!plan.lore?.trim() || !previewHtml?.trim() || isLoading || isGeneratingVideo || isSynthesizingBgm}
-                  onClick={handleGenerateVideo}
-                  className="text-zinc-400 underline-offset-4 hover:text-zinc-200 hover:underline disabled:pointer-events-none disabled:opacity-40"
-                >
-                  {isGeneratingVideo ? "预告生成中" : "生成预告"}
-                </button>
-                {videoStatus ? <span className="text-purple-300">{videoStatus}</span> : null}
-                {videoUrl ? <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-300 hover:underline">查看视频</a> : null}
-              </div>
-            </div>
-          ) : null}
         </section>
-      </section>
+      </div>
     </main>
   );
 }
 
-function LoadingSpinner() {
+function LinePulse() {
   return (
-    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-    </svg>
+    <span className="inline-flex items-center gap-0.5">
+      <span className="h-3 w-0.5 rounded-full bg-current opacity-70 animate-pulse" style={{ animationDelay: "0ms" }} />
+      <span className="h-3 w-0.5 rounded-full bg-current opacity-70 animate-pulse" style={{ animationDelay: "150ms" }} />
+      <span className="h-3 w-0.5 rounded-full bg-current opacity-70 animate-pulse" style={{ animationDelay: "300ms" }} />
+    </span>
   );
 }
 
@@ -1122,16 +1293,16 @@ function WaitingMiniGame({
     window.addEventListener("keydown", handleKey);
 
     const drawBase = (title: string, hint: string) => {
-      ctx.fillStyle = "#111827";
-      ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = "#ffffff18";
-      for (let i = 0; i < 50; i++) ctx.fillRect((i * 137 + game.score * 3) % W, (i * 73) % H, 2, 2);
       ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#00000012";
+      for (let i = 0; i < 50; i++) ctx.fillRect((i * 137 + game.score * 3) % W, (i * 73) % H, 2, 2);
+      ctx.fillStyle = "#1e293b";
       ctx.font = "bold 24px system-ui";
       ctx.textAlign = "left";
       ctx.fillText(title, 24, 38);
       ctx.font = "14px system-ui";
-      ctx.fillStyle = "#94a3b8";
+      ctx.fillStyle = "#64748b";
       ctx.fillText(hint, 24, 62);
     };
 
@@ -1182,12 +1353,12 @@ function WaitingMiniGame({
       ctx.lineTo(58, game.runnerY + 28);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = "#fff";
+      ctx.fillStyle = "#1e293b";
       ctx.font = "bold 22px system-ui";
       ctx.fillText(`分数 ${game.score}`, 24, 96);
       if (!game.started) {
         ctx.textAlign = "center";
-        ctx.fillStyle = "#e5e7eb";
+        ctx.fillStyle = "#64748b";
         ctx.fillText("点击开始", W / 2, H / 2);
       }
       drawEnd();
@@ -1210,12 +1381,12 @@ function WaitingMiniGame({
         ctx.roundRect(x, y, cardW, cardH, 8);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = "#f8fafc";
+        ctx.fillStyle = "#1e293b";
         ctx.font = "bold 28px system-ui";
         ctx.textAlign = "center";
         ctx.fillText(card.flipped || card.matched ? card.symbol : "?", x + cardW / 2, y + 52);
       });
-      ctx.fillStyle = "#fff";
+      ctx.fillStyle = "#1e293b";
       ctx.font = "bold 18px system-ui";
       ctx.textAlign = "left";
       ctx.fillText(`配对 ${game.score}/6  步数 ${game.memoryMoves}/14`, 24, 96);
@@ -1238,10 +1409,10 @@ function WaitingMiniGame({
         ctx.beginPath();
         ctx.arc(point.x, point.y, game.linkSelected === point.id ? 28 : 20, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = "#f8fafc";
+        ctx.strokeStyle = "#334155";
         ctx.stroke();
       }
-      ctx.fillStyle = "#fff";
+      ctx.fillStyle = "#1e293b";
       ctx.font = "bold 18px system-ui";
       ctx.textAlign = "left";
       ctx.fillText(`已连接 ${Object.keys(game.linkPairs).length}/4  失误 ${game.linkMistakes}/4`, 24, 96);
@@ -1273,7 +1444,7 @@ function WaitingMiniGame({
       }
       for (let lane = 0; lane < 3; lane++) {
         const y = 130 + lane * 100;
-        ctx.strokeStyle = "#334155";
+        ctx.strokeStyle = "#cbd5e1";
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.moveTo(110, y);
@@ -1289,7 +1460,7 @@ function WaitingMiniGame({
         ctx.arc(enemy.x, y, 18, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = "#fff";
+      ctx.fillStyle = "#1e293b";
       ctx.font = "bold 18px system-ui";
       ctx.textAlign = "left";
       ctx.fillText(`生命 ${game.defenseHp}  剩余 ${Math.ceil(game.defenseTime)}s  击退 ${game.score}`, 24, 96);
@@ -1321,111 +1492,97 @@ function WaitingMiniGame({
   }, [createState, round, selectedGame]);
 
   return (
-    <div className="relative flex h-full w-full flex-col items-center justify-center gap-3 bg-zinc-900 p-4">
-      <div className="flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-800 bg-zinc-950/70 p-2">
-        <div className="grid flex-1 grid-cols-2 gap-2 md:grid-cols-4">
+    <div className="relative flex h-full w-full flex-col items-center justify-center gap-2 p-3" style={{ background: "var(--bg-canvas)" }}>
+      <div className="glass flex w-full max-w-4xl flex-wrap items-center justify-between gap-1.5 rounded-xl p-1.5">
+        <div className="grid flex-1 grid-cols-2 gap-1.5 md:grid-cols-4">
           {games.map((game) => (
-            <button
-              key={game.id}
-              type="button"
-              onClick={() => switchGame(game.id)}
-              className={[
-                "rounded-md border px-3 py-2 text-left transition",
-                selectedGame === game.id
-                  ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-100"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700",
-              ].join(" ")}
-            >
-              <span className="block text-sm font-semibold">{game.name}</span>
-              <span className="mt-0.5 block truncate text-xs text-zinc-500">{game.desc}</span>
+            <button key={game.id} type="button" onClick={() => switchGame(game.id)}
+              className="rounded-lg border px-2.5 py-1.5 text-left transition duration-200"
+              style={{
+                borderColor: selectedGame === game.id ? "var(--border-strong)" : "var(--border-subtle)",
+                background: selectedGame === game.id ? "var(--bg-surface)" : "transparent",
+                color: selectedGame === game.id ? "var(--text-primary)" : "var(--text-secondary)",
+              }}>
+              <span className="block text-[12px] font-semibold">{game.name}</span>
+              <span className="mt-0.5 block truncate text-[11px]" style={{ color: "var(--text-muted)" }}>{game.desc}</span>
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={() => resetGame()}
-          className="shrink-0 rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800"
-        >
-          重开本局
+        <button type="button" onClick={() => resetGame()}
+          className="shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition duration-200"
+          style={{ color: "var(--text-secondary)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}>
+          重开
         </button>
       </div>
-      <canvas
-        ref={canvasRef}
-        width={800}
-        height={500}
-        className="max-h-[58%] max-w-full rounded-lg shadow-2xl"
-        style={{ imageRendering: "pixelated" }}
-      />
+      <canvas ref={canvasRef} width={800} height={500}
+        className="max-h-[55%] max-w-full rounded-xl border"
+        style={{ imageRendering: "pixelated", borderColor: "var(--border-subtle)", background: "var(--bg-surface-solid)" }} />
 
-      <div className="w-full max-w-4xl rounded-md border border-zinc-800 bg-zinc-950/70 p-3">
-        <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="glass w-full max-w-4xl rounded-xl p-2.5">
+        <div className="grid gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
           {generationStages.map((stage) => {
-            const currentIndex = generationStage
-              ? generationStages.findIndex((item) => item.key === generationStage)
-              : -1;
+            const currentIndex = generationStage ? generationStages.findIndex((item) => item.key === generationStage) : -1;
             const stageIndex = generationStages.findIndex((item) => item.key === stage.key);
             const isDone = currentIndex > stageIndex || generationStage === "done";
             const isActive = generationStage === stage.key && generationStage !== "done";
             return (
-              <div
-                key={stage.key}
-                className={[
-                  "rounded-md border px-2.5 py-2 text-xs",
-                  isActive
-                    ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200"
-                    : isDone
-                    ? "border-zinc-700 bg-zinc-900 text-zinc-300"
-                    : "border-zinc-800 bg-zinc-950 text-zinc-600",
-                ].join(" ")}
-              >
+              <div key={stage.key} className="rounded-lg border px-2 py-1.5 text-[11px]"
+                style={{
+                  borderColor: isActive ? "var(--border-strong)" : isDone ? "var(--border-subtle)" : "var(--border-subtle)",
+                  background: isActive ? "var(--bg-surface)" : "transparent",
+                  color: isActive ? "var(--text-primary)" : isDone ? "var(--text-secondary)" : "var(--text-muted)",
+                }}>
                 <span className="block truncate">{stage.label}</span>
               </div>
             );
           })}
         </div>
-        <p className="mt-2 min-h-4 text-xs text-zinc-500">
+        <p className="mt-1.5 min-h-4 text-[11px]" style={{ color: "var(--text-muted)" }}>
           {generationStageNote || "生成开始后，这里会显示当前阶段。"}
         </p>
       </div>
-      
+
       {gameReady && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-[min(420px,calc(100%-32px))] rounded-lg border border-zinc-700 bg-zinc-800 p-5 text-center shadow-2xl">
-            <div className="text-4xl mb-4">🎉</div>
-            <h3 className="text-xl font-bold mb-2">游戏生成完成！</h3>
-            <p className="text-zinc-400 mb-4">你的游戏已经准备好了，也可以继续玩等待小游戏。</p>
+        <div className="absolute inset-0 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.2)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)" }}>
+          <div className="frosted-panel w-[min(380px,calc(100%-32px))] p-6 text-center">
+            <div className="mb-4 flex justify-center">
+              <svg className="h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+              游戏生成完成
+            </h3>
+            <p className="text-[13px] mb-5" style={{ color: "var(--text-secondary)" }}>
+              你的游戏已经准备好了，也可以继续玩等待小游戏。
+            </p>
             <div className="grid gap-2 sm:grid-cols-3">
-              <button
-                type="button"
-                onClick={onViewGame}
-                className="rounded-md bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 sm:col-span-3"
-              >
+              <button type="button" onClick={onViewGame}
+                className="rounded-xl px-4 py-2.5 text-[13px] font-semibold transition duration-200 sm:col-span-3"
+                style={{ background: "var(--accent)", color: "var(--bg-base)" }}>
                 查看我的游戏
               </button>
-              <button
-                type="button"
-                onClick={() => resetGame()}
-                className="rounded-md border border-zinc-600 px-3 py-2 text-xs text-zinc-200 transition hover:bg-zinc-700"
-              >
+              <button type="button" onClick={() => resetGame()}
+                className="rounded-xl border px-3 py-2 text-[12px] font-medium transition duration-200"
+                style={{ color: "var(--text-secondary)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}>
                 重开本局
               </button>
-              <button
-                type="button"
-                onClick={switchNextGame}
-                className="rounded-md border border-zinc-600 px-3 py-2 text-xs text-zinc-200 transition hover:bg-zinc-700"
-              >
-                换个小游戏
+              <button type="button" onClick={switchNextGame}
+                className="rounded-xl border px-3 py-2 text-[12px] font-medium transition duration-200"
+                style={{ color: "var(--text-secondary)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}>
+                换游戏
               </button>
-              <span className="rounded-md border border-zinc-700 px-3 py-2 text-xs text-zinc-400">
-                当前：{currentGame.name}
+              <span className="rounded-xl border px-3 py-2 text-[12px] text-center"
+                style={{ color: "var(--text-muted)", background: "var(--bg-surface-solid)", borderColor: "var(--border-subtle)" }}>
+                {currentGame.name}
               </span>
             </div>
           </div>
         </div>
       )}
-      
-      <div className="absolute bottom-4 left-4 text-xs text-zinc-500">
-        {currentGame.name} | 边玩边等待
+
+      <div className="absolute bottom-3 left-4 text-[11px]" style={{ color: "var(--text-muted)" }}>
+        {currentGame.name} · 边玩边等待
       </div>
     </div>
   );
